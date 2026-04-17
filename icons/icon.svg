@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Meet Caption Capture">
+  <title>Meet Caption Capture</title>
+  <rect width="128" height="128" rx="26" ry="26" fill="#241D54"/>
+  <rect x="12" y="26" width="104" height="64" rx="12" ry="12" fill="#FED438"/>
+  <polygon points="34,88 36,106 52,88" fill="#FED438"/>
+  <line x1="26" y1="46" x2="102" y2="46" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
+  <line x1="26" y1="60" x2="90"  y2="60" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
+  <line x1="26" y1="74" x2="78"  y2="74" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
+</svg>
