@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Meet Caption Capture">
-  <title>Meet Caption Capture</title>
-  <rect width="128" height="128" rx="26" ry="26" fill="#241D54"/>
-  <rect x="12" y="26" width="104" height="64" rx="12" ry="12" fill="#FED438"/>
-  <polygon points="34,88 36,106 52,88" fill="#FED438"/>
-  <line x1="26" y1="46" x2="102" y2="46" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
-  <line x1="26" y1="60" x2="90"  y2="60" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
-  <line x1="26" y1="74" x2="78"  y2="74" stroke="#090938" stroke-width="7" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="RUBICON Meet Caption Capture">
+  <title>RUBICON Meet Caption Capture</title>
+  <rect width="128" height="128" rx="26" ry="26" fill="#FED438"/>
+  <g transform="translate(28.75 16) scale(0.48)" fill="#090938">
+    <path d="M146.861 200.001L112.918 173.467L146.861 147V200.001ZM146.062 144.401L110.783 171.868L75.5039 144.401L110.783 116.868L146.062 144.401ZM108.711 115.267L74.7012 141.733V88.7334L108.711 115.267ZM146.062 86.1357L110.783 113.603L75.5039 86.1357L110.783 58.6025L146.062 86.1357ZM34.0098 56.9961L0 83.4629V30.4629L34.0098 56.9961ZM146.861 83.4629L112.918 56.9961L146.861 30.4629V83.4629ZM71.3594 27.8721L36.0791 55.3389L0.799805 27.8721L36.0791 0.338867L71.3594 27.8721ZM146.062 27.8721L110.783 55.3389L75.5039 27.8721L110.783 0.338867L146.062 27.8721ZM73.4346 26.2002L39.8262 0H107.11L73.4346 26.2002Z"/>
+  </g>
 </svg>

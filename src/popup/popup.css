@@ -51,6 +51,12 @@ h1 {
   margin-bottom: 10px;
 }
 
+.actions.secondary button {
+  background: #f8f9fa;
+  color: #241D54;
+  border-color: #e8eaed;
+}
+
 button {
   flex: 1;
   padding: 8px 10px;
@@ -87,3 +93,4 @@ button.danger:hover { background: #fce8e6; }
 
 #message.ok { color: #137333; }
 #message.error { color: #d93025; }
+#message.info { color: #5f6368; }

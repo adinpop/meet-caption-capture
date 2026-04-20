@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RUBICON Caption Capture, History</title>
+    <link rel="stylesheet" href="history.css" />
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <h1>RUBICON Caption Capture</h1>
+        <p class="subtitle">Every transcript we have on disk.</p>
+      </div>
+      <div class="header-right">
+        <span id="summary" class="summary"></span>
+        <button id="refresh">Refresh</button>
+        <button id="clear-all" class="danger">Clear all</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="empty" class="empty" hidden>
+        <p>No transcripts yet. Join a Meet or Teams meeting with captions on and come back here.</p>
+      </section>
+
+      <table id="list" class="list">
+        <thead>
+          <tr>
+            <th>Platform</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>Participants</th>
+            <th class="num">Lines</th>
+            <th>Meeting ID</th>
+            <th class="actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </main>
+
+    <footer>
+      <span id="storage"></span>
+    </footer>
+
+    <script src="history.js"></script>
+  </body>
+</html>

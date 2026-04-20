@@ -1,4 +1,4 @@
-# Google Meet Caption Capture — Chrome Extension
+# RUBICON Meet Caption Capture — Chrome Extension
 
 ## Context
 

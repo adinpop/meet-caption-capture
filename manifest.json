@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "Meet Caption Capture",
-  "version": "0.1.0",
-  "description": "Captures Google Meet live captions to a UTF-8 .txt file per meeting.",
+  "name": "RUBICON Meet Caption Capture",
+  "version": "0.3.0",
+  "description": "Captures Google Meet and Microsoft Teams live captions to a UTF-8 .txt file per meeting.",
   "permissions": ["storage", "downloads"],
-  "host_permissions": ["https://meet.google.com/*"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://teams.live.com/*"
+  ],
   "action": {
     "default_popup": "src/popup/popup.html",
-    "default_title": "Meet Caption Capture",
+    "default_title": "RUBICON Meet Caption Capture",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -24,10 +29,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://meet.google.com/*"],
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*"
+      ],
       "js": ["src/content/content.js"],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ]
 }
