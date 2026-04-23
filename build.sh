@@ -18,8 +18,6 @@ rm -f "$OUT"
 zip -r "$OUT" . \
   -x ".git/*" \
      ".git" \
-     "PLAN.md" \
-     "PLAN-v0.2.md" \
      "icons/generate.html" \
      "icons/icon.svg" \
      ".gitignore" \

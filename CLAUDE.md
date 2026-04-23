@@ -15,7 +15,6 @@ src/
 icons/
   icon.svg                            Master logomark (excluded from zip)
   icon16.png, icon48.png, icon128.png
-PLAN.md, PLAN-v0.2.md                 Design notes (excluded from zip)
 ```
 
 ## Key behaviors
