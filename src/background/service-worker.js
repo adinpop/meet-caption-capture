@@ -401,7 +401,8 @@ async function setAudioMeta(platform, meetingId, sessionId, value) {
 
 async function beginAudio({ tabId, platform, meetingId, sessionId }) {
   if (!tabId) return { ok: false, error: 'no tabId' };
-  if (!meetingId || !sessionId) return { ok: false, error: 'no active session. start captions or rejoin the meeting first.' };
+  if (!meetingId) return { ok: false, error: 'no meetingId detected on this tab' };
+  if (!sessionId) sessionId = String(Date.now());
 
   const { apiKey } = await chrome.storage.local.get('apiKey');
   if (!apiKey) return { ok: false, error: 'no api key. open the extension options and save an OpenAI key.' };

@@ -149,8 +149,12 @@ async function refresh() {
     lineCountEl.textContent = '0';
     audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
     setToggleButton('disabled');
-    setAudioButton('disabled', hasKey ? 'No active session yet' : 'Save an OpenAI key in Options first');
-    setMsg('Turn on captions in the meeting. If you just installed or reloaded the extension, reload the tab once.', 'info');
+    if (hasKey) {
+      setAudioButton('start', 'Click to record audio even without captions');
+    } else {
+      setAudioButton('disabled', 'Save an OpenAI key in Options first');
+    }
+    setMsg('Turn on captions in the meeting, or just click Record audio to capture with Whisper only.', 'info');
     lastState = null;
     lastAudio = null;
     return;
@@ -188,8 +192,6 @@ async function refresh() {
 
     if (!hasKey) {
       setAudioButton('disabled', 'Save an OpenAI key in Options first');
-    } else if (!state.sessionId) {
-      setAudioButton('disabled', 'Start captions first so audio shares the same session');
     } else if (audio && audio.meta && audio.meta.state === 'recording') {
       setAudioButton('stop');
     } else {
@@ -213,21 +215,43 @@ toggleAudioBtn.addEventListener('click', async () => {
     return;
   }
   const state = await queryContent(tab.id, 'GET_STATE');
-  if (!state || !state.meetingId || !state.sessionId) {
-    setMsg('No active session. Start captions first.', 'error');
-    return;
-  }
 
   const audio = lastAudio;
   const isRecording = !!(audio && audio.meta && audio.meta.state === 'recording');
+
+  let platform = state && state.platform;
+  let meetingId = state && state.meetingId;
+  let sessionId = state && state.sessionId;
+
+  // Fallback inference from the tab URL when the content script hasn't
+  // attached yet (captions off, or page just loaded).
+  if (!platform || !meetingId) {
+    try {
+      const u = new URL(tab.url);
+      if (u.host === 'meet.google.com') {
+        platform = 'meet';
+        const m = u.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/);
+        meetingId = m ? m[1] : meetingId;
+      } else if (u.host.startsWith('teams.')) {
+        platform = 'teams';
+        const thread = u.searchParams.get('threadId') || u.searchParams.get('context');
+        if (thread) meetingId = thread.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+      }
+    } catch (e) {}
+  }
+
+  if (!meetingId) {
+    setMsg('Cannot detect a meeting on this tab. Join the meeting first.', 'error');
+    return;
+  }
 
   toggleAudioBtn.disabled = true;
   if (isRecording) {
     const r = await chrome.runtime.sendMessage({
       type: 'END_AUDIO',
-      platform: state.platform,
-      meetingId: state.meetingId,
-      sessionId: state.sessionId,
+      platform,
+      meetingId,
+      sessionId: (audio && audio.meta && audio.meta.sessionId) || sessionId,
     });
     if (r && r.ok) setMsg('Audio recording stopped. Remaining chunks will transcribe in the background.', 'ok');
     else setMsg('Could not stop audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
@@ -235,9 +259,9 @@ toggleAudioBtn.addEventListener('click', async () => {
     const r = await chrome.runtime.sendMessage({
       type: 'BEGIN_AUDIO',
       tabId: tab.id,
-      platform: state.platform,
-      meetingId: state.meetingId,
-      sessionId: state.sessionId,
+      platform,
+      meetingId,
+      sessionId,
     });
     if (r && r.ok) setMsg('Audio recording started.', 'ok');
     else setMsg('Could not start audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
