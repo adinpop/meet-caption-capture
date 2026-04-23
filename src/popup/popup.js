@@ -1,16 +1,26 @@
 const statusEl = document.getElementById('status');
 const meetingEl = document.getElementById('meeting-id');
 const lineCountEl = document.getElementById('line-count');
+const audioStatusEl = document.getElementById('audio-status');
 const toggleBtn = document.getElementById('toggle-capture');
+const toggleAudioBtn = document.getElementById('toggle-audio');
+const openOptionsBtn = document.getElementById('open-options');
 const downloadBtn = document.getElementById('download');
 const clearBtn = document.getElementById('clear');
 const historyBtn = document.getElementById('history');
 const messageEl = document.getElementById('message');
 
 let lastState = null;
+let lastAudio = null;
+let lastApiKeyPresent = null;
 
 historyBtn.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/history/history.html') });
+});
+
+openOptionsBtn.addEventListener('click', () => {
+  if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+  else chrome.tabs.create({ url: chrome.runtime.getURL('src/options/options.html') });
 });
 
 function setMsg(text, kind) {
@@ -70,14 +80,66 @@ function setToggleButton(mode) {
   }
 }
 
+function setAudioButton(mode, info) {
+  if (mode === 'stop') {
+    toggleAudioBtn.textContent = 'Stop audio';
+    toggleAudioBtn.className = 'primary stop';
+    toggleAudioBtn.disabled = false;
+    toggleAudioBtn.removeAttribute('title');
+  } else if (mode === 'start') {
+    toggleAudioBtn.textContent = 'Record audio';
+    toggleAudioBtn.className = 'primary';
+    toggleAudioBtn.disabled = false;
+    toggleAudioBtn.removeAttribute('title');
+  } else {
+    toggleAudioBtn.textContent = 'Record audio';
+    toggleAudioBtn.className = 'primary';
+    toggleAudioBtn.disabled = true;
+    toggleAudioBtn.title = info || 'Requires an OpenAI API key (Options)';
+  }
+}
+
+function renderAudioStatus(audio, hasKey) {
+  if (!hasKey) {
+    audioStatusEl.textContent = 'no key (open Options)';
+    return;
+  }
+  if (!audio || !audio.meta) {
+    audioStatusEl.textContent = 'off';
+    return;
+  }
+  const m = audio.meta;
+  const bits = [];
+  bits.push(m.state || 'idle');
+  if (m.chunkCount) bits.push(`${m.chunkCount} chunk${m.chunkCount === 1 ? '' : 's'}`);
+  if (audio.pending) bits.push(`${audio.pending} pending`);
+  if (audio.failed) bits.push(`${audio.failed} failed`);
+  audioStatusEl.textContent = bits.join(' · ');
+}
+
+async function getApiKeyPresent() {
+  try {
+    const got = await chrome.storage.local.get('apiKey');
+    return !!(got && got.apiKey);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function refresh() {
   const tab = await getActiveSupportedTab();
+  const hasKey = await getApiKeyPresent();
+  lastApiKeyPresent = hasKey;
+
   if (!tab) {
     setStatus('No meeting tab', 'status-idle');
     meetingEl.textContent = '—';
     lineCountEl.textContent = '0';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
     setToggleButton('disabled');
+    setAudioButton('disabled', 'Open a Meet or Teams tab first');
     lastState = null;
+    lastAudio = null;
     return;
   }
   const state = await queryContent(tab.id, 'GET_STATE');
@@ -85,9 +147,12 @@ async function refresh() {
     setStatus('Waiting for captions', 'status-waiting');
     meetingEl.textContent = '—';
     lineCountEl.textContent = '0';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
     setToggleButton('disabled');
+    setAudioButton('disabled', hasKey ? 'No active session yet' : 'Save an OpenAI key in Options first');
     setMsg('Turn on captions in the meeting. If you just installed or reloaded the extension, reload the tab once.', 'info');
     lastState = null;
+    lastAudio = null;
     return;
   }
   lastState = state;
@@ -111,13 +176,74 @@ async function refresh() {
       sessionId: state.sessionId,
     });
     lineCountEl.textContent = String(res && res.lines ? res.lines.length : 0);
+
+    const audio = await chrome.runtime.sendMessage({
+      type: 'GET_AUDIO_STATE',
+      platform: state.platform,
+      meetingId: state.meetingId,
+      sessionId: state.sessionId,
+    });
+    lastAudio = audio;
+    renderAudioStatus(audio, hasKey);
+
+    if (!hasKey) {
+      setAudioButton('disabled', 'Save an OpenAI key in Options first');
+    } else if (!state.sessionId) {
+      setAudioButton('disabled', 'Start captions first so audio shares the same session');
+    } else if (audio && audio.meta && audio.meta.state === 'recording') {
+      setAudioButton('stop');
+    } else {
+      setAudioButton('start');
+    }
   } else {
     meetingEl.textContent = '—';
     setStatus('No active meeting', 'status-idle');
     lineCountEl.textContent = '0';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
     setToggleButton('disabled');
+    setAudioButton('disabled', 'No active meeting');
   }
 }
+
+toggleAudioBtn.addEventListener('click', async () => {
+  setMsg('');
+  const tab = await getActiveSupportedTab();
+  if (!tab) {
+    setMsg('Open a Meet or Teams tab first.', 'error');
+    return;
+  }
+  const state = await queryContent(tab.id, 'GET_STATE');
+  if (!state || !state.meetingId || !state.sessionId) {
+    setMsg('No active session. Start captions first.', 'error');
+    return;
+  }
+
+  const audio = lastAudio;
+  const isRecording = !!(audio && audio.meta && audio.meta.state === 'recording');
+
+  toggleAudioBtn.disabled = true;
+  if (isRecording) {
+    const r = await chrome.runtime.sendMessage({
+      type: 'END_AUDIO',
+      platform: state.platform,
+      meetingId: state.meetingId,
+      sessionId: state.sessionId,
+    });
+    if (r && r.ok) setMsg('Audio recording stopped. Remaining chunks will transcribe in the background.', 'ok');
+    else setMsg('Could not stop audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
+  } else {
+    const r = await chrome.runtime.sendMessage({
+      type: 'BEGIN_AUDIO',
+      tabId: tab.id,
+      platform: state.platform,
+      meetingId: state.meetingId,
+      sessionId: state.sessionId,
+    });
+    if (r && r.ok) setMsg('Audio recording started.', 'ok');
+    else setMsg('Could not start audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
+  }
+  refresh();
+});
 
 toggleBtn.addEventListener('click', async () => {
   setMsg('');

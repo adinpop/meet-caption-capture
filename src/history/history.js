@@ -74,25 +74,49 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+function sourceBadges(item) {
+  const badges = [];
+  if (item.lineCount > 0) badges.push('<span class="source-badge source-captions">CAPTIONS</span>');
+  if (item.audioLineCount > 0) badges.push('<span class="source-badge source-audio">AUDIO</span>');
+  const am = item.audioMeta;
+  if (am && am.state === 'recording') badges.push('<span class="source-badge source-pending">REC</span>');
+  else if (am && am.state === 'transcribing') badges.push('<span class="source-badge source-pending">TRANSCRIBING</span>');
+  return badges.join(' ');
+}
+
+function combinedFirstSeen(item) {
+  const m = item.meta && item.meta.firstSeenAt;
+  const a = item.audioMeta && item.audioMeta.startedAt;
+  if (m && a) return Math.min(m, a);
+  return m || a || 0;
+}
+
+function combinedLastUpdated(item) {
+  const m = item.meta && item.meta.lastUpdatedAt;
+  const a = item.audioMeta && (item.audioMeta.stoppedAt || item.audioMeta.lastUpdatedAt);
+  if (m && a) return Math.max(m, a);
+  return m || a || 0;
+}
+
 async function render() {
   const res = await chrome.runtime.sendMessage({ type: 'LIST_MEETINGS' });
   const items = (res && res.items) || [];
-  items.sort((a, b) => {
-    const aT = (a.meta && (a.meta.lastUpdatedAt || a.meta.firstSeenAt)) || 0;
-    const bT = (b.meta && (b.meta.lastUpdatedAt || b.meta.firstSeenAt)) || 0;
-    return bT - aT;
-  });
+  items.sort((a, b) => combinedLastUpdated(b) - combinedLastUpdated(a));
 
   rowsEl.innerHTML = '';
   for (const item of items) {
     const meta = item.meta || {};
+    const aMeta = item.audioMeta || {};
+    const firstSeen = combinedFirstSeen(item);
+    const lastUpdated = combinedLastUpdated(item);
+    const totalLines = (item.lineCount || 0) + (item.audioLineCount || 0);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><span class="platform-badge ${platformClass(item.platform)}">${platformLabel(item.platform)}</span></td>
-      <td>${fmtDateTime(meta.firstSeenAt)}${meta.finalized ? '<span class="finalized">ended</span>' : ''}</td>
-      <td>${fmtDuration(meta.firstSeenAt, meta.lastUpdatedAt)}</td>
+      <td><span class="platform-badge ${platformClass(item.platform)}">${platformLabel(item.platform)}</span>${sourceBadges(item) ? ' ' + sourceBadges(item) : ''}</td>
+      <td>${fmtDateTime(firstSeen)}${meta.finalized ? '<span class="finalized">ended</span>' : ''}</td>
+      <td>${fmtDuration(firstSeen, lastUpdated)}</td>
       <td class="participants">${participantsCell(meta)}</td>
-      <td class="num">${item.lineCount || (meta.lineCount || 0)}</td>
+      <td class="num">${totalLines}</td>
       <td><span class="meeting-id">${escapeHtml(item.meetingId)}</span></td>
       <td class="actions-col">
         <span class="cell-actions">

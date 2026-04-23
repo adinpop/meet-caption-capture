@@ -1,17 +1,21 @@
 # RUBICON Meet Caption Capture
 
-Chrome MV3 extension that captures live captions from Google Meet and Microsoft Teams web and saves them as a UTF-8 Markdown (`.md`) file per meeting, with YAML frontmatter (platform, meeting_id, title, date, start_time, end_time, duration, participants). Language-agnostic (follows whatever caption language the platform is set to).
+Chrome MV3 extension that captures live captions from Google Meet and Microsoft Teams web and saves them as a UTF-8 Markdown (`.md`) file per meeting, with YAML frontmatter (platform, meeting_id, title, date, start_time, end_time, duration, participants). Optional opt-in audio recording of the active meeting tab, transcribed via OpenAI Whisper, appended to the same `.md` under a separate section. Language-agnostic (follows whatever caption language the platform is set to).
 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.5.0
+manifest.json                         MV3 manifest, v0.6.0. SW is ES module.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
-  content/content.js                  MutationObserver + adapters; writes transcripts directly to chrome.storage.local
-  background/service-worker.js        Download builder, CLEAR / CLEAR_ALL, LIST_MEETINGS, MARK_FINALIZED
-  popup/popup.html|js|css             Live status chip, Download now, Clear, View history
+  content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
+  background/service-worker.js        Message router, Markdown builder, captions + audio storage, Whisper pipeline
+  popup/popup.html|js|css             Live status, Stop/Start capture, Record audio, Download, Clear, View history, Options link
   history/history.html|js|css         Full-page transcript browser (opens via chrome.tabs.create)
+  options/options.html|js|css         OpenAI API key input, validates against /v1/models, stores in chrome.storage.local
+  offscreen/offscreen.html|js         Owns MediaStream + MediaRecorder for audio capture; writes chunks to IndexedDB
+  lib/audio-db.js                     IndexedDB wrapper for raw audio chunk blobs (captionCapture DB, audioChunks store)
+  lib/whisper.js                      Thin wrapper around api.openai.com/v1/audio/transcriptions; only caller of the API key
 icons/
   icon.svg                            Master logomark (excluded from zip)
   icon16.png, icon48.png, icon128.png
@@ -35,6 +39,11 @@ icons/
   - to content script (from popup): `GET_STATE`, `FLUSH_NOW`, `STOP_CAPTURE`, `START_CAPTURE`. `GET_STATE` reply includes `sessionId` and `paused`.
 - Auto-download fires on meeting end (pagehide, URL change off meeting path, leave-meeting DOM heuristic). Popup **Download now** and the **View history** page are manual safety nets.
 - **Stop / Start capture** (popup): Stop flushes writes, finalizes+downloads the current session, and sets `paused=true` so no further captions are persisted. Start clears the paused flag; the next caption creates a fresh session. While paused, the session chip shows **Paused**.
+- **Audio recording (opt-in)**: requires an OpenAI API key saved from the options page. Click **Record audio** in the popup to begin capturing the active tab's audio via `chrome.tabCapture.getMediaStreamId` + offscreen `getUserMedia`. MediaRecorder chunks at 30 s, writes blobs to IndexedDB (`captionCapture.audioChunks`), and notifies the service worker per chunk. The service worker reads each blob, POSTs it to `api.openai.com/v1/audio/transcriptions` (`whisper-1`), appends a timestamped line to `audio_transcript:<platform>:<meetingId>:<sessionId>`, and deletes the blob. Sessions are shared with captions when both are active; audio can also run on its own (no captions required) as long as a sessionId is assigned.
+  - Audio storage keys: `audio_transcript:<platform>:<meetingId>:<sessionId>` → array of `[HH:MM:SS] text` lines; `audio_meta:<platform>:<meetingId>:<sessionId>` → `{ state, startedAt, stoppedAt, chunkCount, failedChunks, lastTail, lastError, ... }`. `lastTail` (≤80 chars) is fed back to Whisper as `prompt` on the next chunk to bridge mid-sentence cuts.
+  - Retry: one immediate retry on 5xx / 429, fail otherwise. Failed chunks stay in IndexedDB with `status: 'failed'` and can be retried via `RETRY_FAILED_CHUNKS`.
+  - Download: `finalizeAndDownload` now emits `## Captions transcript` and/or `## Audio transcript (Whisper)` sections in the same `.md`, driven by whichever storage keys exist for the session.
+- **API key handling**: stored only in `chrome.storage.local` (never `sync`). Only the service worker reads it. Offscreen doc and popup never see it. `host_permissions` is narrowed to `https://api.openai.com/*` so no other exfil endpoint is reachable.
 
 ## Host permissions
 
@@ -42,6 +51,11 @@ icons/
 - `https://teams.microsoft.com/*`
 - `https://teams.cloud.microsoft/*`
 - `https://teams.live.com/*`
+- `https://api.openai.com/*` (Whisper transcription; only used when a user-provided API key is saved)
+
+## API permissions
+
+`storage`, `downloads`, `offscreen`, `tabCapture`, `activeTab`. The audio pipeline requires all five; captions alone only needs `storage` + `downloads`.
 
 ## Selector strategy
 
@@ -53,7 +67,8 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.2.0**: adds Microsoft Teams web. Platform-agnostic copy. Filename prefixed by platform. Teams selectors still being tuned against a live call.
 - **0.3.0**: durability (direct rolling writes), history browser, real Teams selectors.
 - **0.4.0**: Markdown output with YAML frontmatter (date, time, duration, participants, DOM-scraped meeting title). Filename extension `.md`.
-- **0.5.0** (current): per-session storage keys so recurring meetings no longer append across days. 15-min gap auto-cuts a new session; popup **Stop capture** / **Start capture** buttons give manual control. History browser shows one row per session.
+- **0.5.0**: per-session storage keys so recurring meetings no longer append across days. 15-min gap auto-cuts a new session; popup **Stop capture** / **Start capture** buttons give manual control. History browser shows one row per session.
+- **0.6.0** (current): opt-in audio capture of the active meeting tab + Whisper transcription. Offscreen document owns the MediaStream, MediaRecorder slices at 30 s into IndexedDB, service worker ships chunks to `api.openai.com/v1/audio/transcriptions`. Combined Markdown export with `## Captions transcript` and `## Audio transcript (Whisper)` sections. Options page for API key. Service worker now an ES module.
 
 ## Build and install
 

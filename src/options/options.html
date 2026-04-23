@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RUBICON Meet Caption Capture — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>RUBICON Meet Caption Capture</h1>
+      <p class="subtitle">Audio transcription settings</p>
+
+      <section class="card">
+        <h2>OpenAI API key</h2>
+        <p class="hint">
+          Used for Whisper audio transcription. Stored only on this device via
+          <code>chrome.storage.local</code>. Never synced to your Google account, never
+          sent anywhere other than <code>api.openai.com</code>. The key lives in
+          plaintext in your Chrome profile directory, so your OS user account is the
+          trust boundary.
+        </p>
+        <p class="hint">
+          Recommended: create a restricted key scoped to the Audio API only, with a
+          hard usage limit on your OpenAI account.
+        </p>
+
+        <div id="has-key" class="row" hidden>
+          <div>
+            <label>Current key</label>
+            <div id="key-display" class="masked">—</div>
+          </div>
+          <button id="remove" class="danger">Remove key</button>
+        </div>
+
+        <div id="no-key" class="row" hidden>
+          <div class="grow">
+            <label for="key-input">Paste your OpenAI API key</label>
+            <input id="key-input" type="password" autocomplete="off" placeholder="sk-..." />
+          </div>
+          <button id="save" class="primary">Validate &amp; save</button>
+        </div>
+
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="card muted">
+        <h2>How it works</h2>
+        <ul>
+          <li>Audio is captured from the active Meet or Teams tab only while you click <strong>Record audio</strong> in the popup.</li>
+          <li>Audio is chunked into 30 second segments and uploaded to <code>api.openai.com/v1/audio/transcriptions</code> as they become available.</li>
+          <li>Raw audio is held in IndexedDB while in flight and deleted after successful transcription.</li>
+          <li>Transcripts are merged into the downloadable Markdown file under a separate <code>## Audio transcript</code> section.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="options.js" type="module"></script>
+  </body>
+</html>
