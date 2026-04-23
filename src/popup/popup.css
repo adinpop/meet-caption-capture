@@ -30,6 +30,7 @@ h1 {
 .status-idle { background: #eee; color: #5f6368; }
 .status-waiting { background: #fef7e0; color: #b06000; }
 .status-recording { background: #e6f4ea; color: #137333; }
+.status-paused { background: #fce8e6; color: #b3261e; }
 
 .info {
   font-size: 12px;
@@ -71,6 +72,23 @@ button {
 button:hover { background: #f1f3f4; }
 button.danger { color: #d93025; }
 button.danger:hover { background: #fce8e6; }
+
+button.primary {
+  background: #241D54;
+  color: #fff;
+  border-color: #241D54;
+}
+button.primary:hover { background: #1a1440; }
+button.primary.stop {
+  background: #b3261e;
+  border-color: #b3261e;
+}
+button.primary.stop:hover { background: #8c1c18; }
+button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button[disabled]:hover { background: #fff; }
 
 .hint {
   font-size: 11px;

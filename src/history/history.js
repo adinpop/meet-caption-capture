@@ -102,13 +102,15 @@ async function render() {
       </td>
     `;
     tr.querySelector('.download').addEventListener('click', async (ev) => {
-      ev.currentTarget.disabled = true;
+      const btn = ev.currentTarget;
+      btn.disabled = true;
       const r = await chrome.runtime.sendMessage({
         type: 'FINALIZE_AND_DOWNLOAD',
         platform: item.platform,
         meetingId: item.meetingId,
+        sessionId: item.sessionId,
       });
-      ev.currentTarget.disabled = false;
+      if (btn.isConnected) btn.disabled = false;
       if (r && r.ok) {
         toast(`Downloaded ${r.filename}`);
       } else {
@@ -116,11 +118,12 @@ async function render() {
       }
     });
     tr.querySelector('.clear').addEventListener('click', async () => {
-      if (!confirm(`Delete transcript for ${item.meetingId}?`)) return;
+      if (!confirm(`Delete this session of ${item.meetingId}?`)) return;
       await chrome.runtime.sendMessage({
         type: 'CLEAR',
         platform: item.platform,
         meetingId: item.meetingId,
+        sessionId: item.sessionId,
       });
       toast('Transcript deleted.');
       render();

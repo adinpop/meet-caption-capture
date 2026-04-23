@@ -13,6 +13,22 @@
       return m ? m[1] : null;
     },
     isMeetingUrl: (loc) => /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\/|$)/.test(loc.pathname),
+    getMeetingTitle: () => {
+      const explicit =
+        document.querySelector('[data-meeting-title]') ||
+        document.querySelector('[data-call-title]') ||
+        document.querySelector('[data-self-name]');
+      if (explicit) {
+        const attr = explicit.getAttribute('data-meeting-title') || explicit.getAttribute('data-call-title') || '';
+        const t = (attr || explicit.textContent || '').trim();
+        if (t && !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(t)) return t;
+      }
+      let dt = (document.title || '').trim();
+      dt = dt.replace(/^Meet\s*[:|]\s*/i, '').trim();
+      if (!dt || /^meet$/i.test(dt)) return '';
+      if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(dt)) return '';
+      return dt;
+    },
     findCaptionsRoot: () => {
       const regions = document.querySelectorAll('div[role="region"]');
       for (const r of regions) {
@@ -92,6 +108,27 @@
       const haystack = (loc.pathname || '') + (loc.search || '') + (loc.hash || '');
       return /meet(up)?\b|meetup-join|\/v2\//i.test(haystack) || !!document.querySelector(TEAMS_TEXT_SELECTOR);
     },
+    getMeetingTitle: () => {
+      const selectors = [
+        '[data-tid="calv2-call-title"]',
+        '[data-tid="call-title"]',
+        '[data-tid="calling-meeting-name"]',
+        '[data-tid="meeting-title"]',
+        '[data-tid="call-status-container"] [data-tid="meeting-subject"]',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const t = (el.textContent || '').trim();
+          if (t) return t;
+        }
+      }
+      let dt = (document.title || '').trim();
+      dt = dt.replace(/\s*\|\s*Microsoft Teams\s*$/i, '').trim();
+      dt = dt.replace(/^Microsoft Teams\s*[:|]\s*/i, '').trim();
+      if (!dt || /^microsoft teams$/i.test(dt)) return '';
+      return dt;
+    },
     findCaptionsRoot: () => {
       const sample = document.querySelector(TEAMS_TEXT_SELECTOR);
       if (!sample) return null;
@@ -154,9 +191,12 @@
   const IDLE_COMMIT_MS = 3000;
   const COMMIT_DEBOUNCE_MS = 500;
   const MAX_PARTICIPANTS_IN_META = 50;
+  const SESSION_GAP_MS = 15 * 60 * 1000;
 
   const state = {
     meetingId: null,
+    sessionId: null,
+    paused: false,
     observer: null,
     captionsRoot: null,
     blocks: new Map(),
@@ -183,25 +223,88 @@
     return `[${hh}:${mm}:${ss}] ${speaker}: ${entry.text}`;
   }
 
+  async function ensureSession() {
+    if (state.paused) return null;
+    if (!state.meetingId) return null;
+    const platform = adapter.id;
+    const now = Date.now();
+
+    if (state.sessionId) {
+      const metaKey = `meta:${platform}:${state.meetingId}:${state.sessionId}`;
+      const got = await chrome.storage.local.get(metaKey);
+      const rec = got[metaKey];
+      const last = rec ? (rec.lastUpdatedAt || rec.firstSeenAt || 0) : 0;
+      if (last && now - last > SESSION_GAP_MS) {
+        try {
+          if (rec && !rec.finalized) {
+            rec.finalized = true;
+            rec.finalizedAt = now;
+            await chrome.storage.local.set({ [metaKey]: rec });
+          }
+        } catch (e) {}
+        for (const ent of state.blocks.values()) {
+          ent.committedIndex = null;
+          ent.committedLine = '';
+          ent.committedSessionId = null;
+        }
+        state.sessionId = null;
+      }
+    }
+
+    if (state.sessionId) return state.sessionId;
+
+    const prefix = `meta:${platform}:${state.meetingId}:`;
+    const all = await chrome.storage.local.get(null);
+    let best = null;
+    for (const key of Object.keys(all)) {
+      if (!key.startsWith(prefix)) continue;
+      const rec = all[key];
+      if (!rec || rec.finalized) continue;
+      const last = rec.lastUpdatedAt || rec.firstSeenAt || 0;
+      if (now - last > SESSION_GAP_MS) continue;
+      if (!best || last > best.last) {
+        best = { sessionId: key.slice(prefix.length), last };
+      }
+    }
+    state.sessionId = best ? best.sessionId : String(now);
+    log('session', state.sessionId, best ? 'adopted' : 'new');
+    return state.sessionId;
+  }
+
   async function persistEntry(entry) {
     if (!state.meetingId) return;
     const text = (entry.text || '').trim();
     if (!text) return;
     const platform = adapter.id;
-    const txKey = `transcript:${platform}:${state.meetingId}`;
-    const metaKey = `meta:${platform}:${state.meetingId}`;
     await enqueueWrite(async () => {
+      const sessionId = await ensureSession();
+      if (!sessionId) return;
+      const txKey = `transcript:${platform}:${state.meetingId}:${sessionId}`;
+      const metaKey = `meta:${platform}:${state.meetingId}:${sessionId}`;
+      if (entry.committedSessionId && entry.committedSessionId !== sessionId) {
+        entry.committedIndex = null;
+        entry.committedLine = '';
+      }
+      entry.committedSessionId = sessionId;
       const got = await chrome.storage.local.get([txKey, metaKey]);
       const lines = Array.isArray(got[txKey]) ? got[txKey].slice() : [];
       const meta = got[metaKey] || {
         platform,
         meetingId: state.meetingId,
+        sessionId,
         firstSeenAt: entry.firstSeen,
         lastUpdatedAt: entry.firstSeen,
         lineCount: 0,
         participants: [],
+        title: '',
         finalized: false,
       };
+      if (!meta.title && typeof adapter.getMeetingTitle === 'function') {
+        try {
+          const t = (adapter.getMeetingTitle() || '').trim();
+          if (t) meta.title = t;
+        } catch (e) {}
+      }
       const line = buildLine(entry);
 
       if (entry.committedIndex == null) {
@@ -352,12 +455,14 @@
   async function finalize(reason) {
     log('finalize', reason);
     await flushAll();
-    if (state.meetingId) {
+    const sid = state.sessionId;
+    if (state.meetingId && sid) {
       try {
         await chrome.runtime.sendMessage({
           type: 'MARK_FINALIZED',
           platform: adapter.id,
           meetingId: state.meetingId,
+          sessionId: sid,
         });
       } catch (e) {}
       try {
@@ -365,6 +470,7 @@
           type: 'FINALIZE_AND_DOWNLOAD',
           platform: adapter.id,
           meetingId: state.meetingId,
+          sessionId: sid,
         });
       } catch (e) {}
     }
@@ -439,7 +545,9 @@
         reply({
           platform: adapter.id,
           meetingId: state.meetingId,
-          recording: !!state.observer,
+          sessionId: state.sessionId,
+          paused: state.paused,
+          recording: !!state.observer && !state.paused,
           blockCount: state.blocks.size,
         });
         return true;
@@ -447,6 +555,47 @@
       if (msg.type === 'FLUSH_NOW') {
         if (!state.captionsRoot && !state.meetingId) return;
         flushAll().then(() => reply({ ok: true })).catch(() => reply({ ok: false }));
+        return true;
+      }
+      if (msg.type === 'STOP_CAPTURE') {
+        if (!state.captionsRoot && !state.meetingId) return;
+        (async () => {
+          await flushAll();
+          const sid = state.sessionId;
+          let downloaded = null;
+          if (state.meetingId && sid) {
+            try {
+              await chrome.runtime.sendMessage({
+                type: 'MARK_FINALIZED',
+                platform: adapter.id,
+                meetingId: state.meetingId,
+                sessionId: sid,
+              });
+            } catch (e) {}
+            try {
+              downloaded = await chrome.runtime.sendMessage({
+                type: 'FINALIZE_AND_DOWNLOAD',
+                platform: adapter.id,
+                meetingId: state.meetingId,
+                sessionId: sid,
+              });
+            } catch (e) {}
+          }
+          state.paused = true;
+          state.sessionId = null;
+          for (const ent of state.blocks.values()) {
+            ent.committedIndex = null;
+            ent.committedLine = '';
+            ent.committedSessionId = null;
+          }
+          reply({ ok: true, downloaded });
+        })();
+        return true;
+      }
+      if (msg.type === 'START_CAPTURE') {
+        if (!state.captionsRoot && !state.meetingId) return;
+        state.paused = false;
+        reply({ ok: true });
         return true;
       }
     });

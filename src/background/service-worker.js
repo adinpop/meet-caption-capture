@@ -2,8 +2,9 @@ const PREFIX_TX = 'transcript:';
 const PREFIX_META = 'meta:';
 const PREFIX_PARTIAL = 'partial:';
 
-function keysFor(platform, meetingId) {
-  const suffix = `${platform || 'unknown'}:${meetingId}`;
+function keysFor(platform, meetingId, sessionId) {
+  const base = `${platform || 'unknown'}:${meetingId}`;
+  const suffix = sessionId ? `${base}:${sessionId}` : base;
   return {
     tx: PREFIX_TX + suffix,
     meta: PREFIX_META + suffix,
@@ -12,25 +13,27 @@ function keysFor(platform, meetingId) {
 }
 
 function splitSuffix(rest) {
-  const colonIdx = rest.indexOf(':');
-  if (colonIdx < 0) return { platform: 'unknown', meetingId: rest };
-  return { platform: rest.slice(0, colonIdx), meetingId: rest.slice(colonIdx + 1) };
+  const parts = rest.split(':');
+  if (parts.length === 0) return { platform: 'unknown', meetingId: rest, sessionId: null };
+  if (parts.length === 1) return { platform: 'unknown', meetingId: parts[0], sessionId: null };
+  if (parts.length === 2) return { platform: parts[0], meetingId: parts[1], sessionId: null };
+  return { platform: parts[0], meetingId: parts[1], sessionId: parts.slice(2).join(':') };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg || !msg.type) return;
   if (msg.type === 'GET_TRANSCRIPT') {
-    getTranscript(msg.platform, msg.meetingId).then((lines) => reply({ lines }));
+    getTranscript(msg.platform, msg.meetingId, msg.sessionId).then((lines) => reply({ lines }));
     return true;
   }
   if (msg.type === 'FINALIZE_AND_DOWNLOAD') {
-    finalizeAndDownload(msg.platform, msg.meetingId)
+    finalizeAndDownload(msg.platform, msg.meetingId, msg.sessionId)
       .then((r) => reply(r))
       .catch((e) => reply({ ok: false, error: String(e) }));
     return true;
   }
   if (msg.type === 'CLEAR') {
-    clearTranscript(msg.platform, msg.meetingId)
+    clearTranscript(msg.platform, msg.meetingId, msg.sessionId)
       .then(() => reply({ ok: true }))
       .catch((e) => reply({ ok: false, error: String(e) }));
     return true;
@@ -46,23 +49,23 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === 'MARK_FINALIZED') {
-    markFinalized(msg.platform, msg.meetingId)
+    markFinalized(msg.platform, msg.meetingId, msg.sessionId)
       .then(() => reply({ ok: true }))
       .catch((e) => reply({ ok: false, error: String(e) }));
     return true;
   }
 });
 
-async function getTranscript(platform, meetingId) {
+async function getTranscript(platform, meetingId, sessionId) {
   if (!meetingId) return [];
-  const { tx } = keysFor(platform, meetingId);
+  const { tx } = keysFor(platform, meetingId, sessionId);
   const got = await chrome.storage.local.get(tx);
   return got[tx] || [];
 }
 
-async function clearTranscript(platform, meetingId) {
+async function clearTranscript(platform, meetingId, sessionId) {
   if (!meetingId) return;
-  const { tx, meta, partial } = keysFor(platform, meetingId);
+  const { tx, meta, partial } = keysFor(platform, meetingId, sessionId);
   await chrome.storage.local.remove([tx, meta, partial]);
 }
 
@@ -75,9 +78,9 @@ async function clearAll() {
   return { removed: keys.length };
 }
 
-async function markFinalized(platform, meetingId) {
+async function markFinalized(platform, meetingId, sessionId) {
   if (!meetingId) return;
-  const { meta } = keysFor(platform, meetingId);
+  const { meta } = keysFor(platform, meetingId, sessionId);
   const got = await chrome.storage.local.get(meta);
   const record = got[meta];
   if (!record) return;
@@ -91,11 +94,12 @@ async function listMeetings() {
   const out = [];
   for (const key of Object.keys(all)) {
     if (!key.startsWith(PREFIX_TX)) continue;
-    const { platform, meetingId } = splitSuffix(key.slice(PREFIX_TX.length));
-    const metaKey = PREFIX_META + `${platform}:${meetingId}`;
+    const { platform, meetingId, sessionId } = splitSuffix(key.slice(PREFIX_TX.length));
+    const metaKey = PREFIX_META + key.slice(PREFIX_TX.length);
     out.push({
       platform,
       meetingId,
+      sessionId,
       lineCount: Array.isArray(all[key]) ? all[key].length : 0,
       meta: all[metaKey] || null,
     });
@@ -120,6 +124,74 @@ function dateParts(d) {
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   return { date: `${Y}-${M}-${D}`, time: `${h}${m}` };
+}
+
+function timeOfDay(d) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatDuration(firstMs, lastMs) {
+  if (!firstMs || !lastMs || lastMs <= firstMs) return '';
+  const secs = Math.round((lastMs - firstMs) / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const restSec = secs % 60;
+  if (mins < 60) return `${mins}m ${restSec}s`;
+  const hours = Math.floor(mins / 60);
+  const restMin = mins % 60;
+  return `${hours}h ${restMin}m`;
+}
+
+function yamlString(s) {
+  return '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+
+function buildMarkdown(platform, meetingId, record, lines) {
+  const start = record && record.firstSeenAt ? new Date(record.firstSeenAt) : new Date();
+  const endMs = record && record.lastUpdatedAt ? record.lastUpdatedAt : null;
+  const end = endMs ? new Date(endMs) : null;
+  const { date } = dateParts(start);
+  const startTime = timeOfDay(start);
+  const endTime = end ? timeOfDay(end) : '';
+  const duration = record ? formatDuration(record.firstSeenAt, record.lastUpdatedAt) : '';
+  const title = (record && record.title) || '';
+  const sourceNames =
+    record && Array.isArray(record.participants) && record.participants.length > 0
+      ? record.participants
+      : extractParticipants(lines);
+
+  const out = [];
+  out.push('---');
+  out.push(`platform: ${platform || 'unknown'}`);
+  out.push(`meeting_id: ${yamlString(meetingId)}`);
+  if (title) out.push(`title: ${yamlString(title)}`);
+  out.push(`date: ${date}`);
+  out.push(`start_time: ${yamlString(startTime)}`);
+  if (endTime) out.push(`end_time: ${yamlString(endTime)}`);
+  if (duration) out.push(`duration: ${yamlString(duration)}`);
+  if (sourceNames.length === 0) {
+    out.push('participants: []');
+  } else {
+    out.push('participants:');
+    for (const p of sourceNames) out.push(`  - ${yamlString(p)}`);
+  }
+  out.push('---');
+  out.push('');
+  out.push(`# ${title || 'Meeting transcript'}`);
+  out.push('');
+
+  const LINE_RE = /^\[(\d{2}:\d{2}:\d{2})\]\s+([^:]+):\s*([\s\S]*)$/;
+  for (const line of lines) {
+    const m = line.match(LINE_RE);
+    if (m) {
+      out.push(`**[${m[1]}] ${m[2]}:** ${m[3]}`);
+    } else {
+      out.push(line);
+    }
+    out.push('');
+  }
+
+  return out.join('\n');
 }
 
 const TRANSLIT = {
@@ -161,16 +233,16 @@ function formatParticipants(participants, max = 3) {
   return cleaned.slice(0, max).join('-') + `-and-${cleaned.length - max}-more`;
 }
 
-async function finalizeAndDownload(platform, meetingId) {
+async function finalizeAndDownload(platform, meetingId, sessionId) {
   if (!meetingId) return { ok: false, error: 'no meetingId' };
-  const { tx, meta } = keysFor(platform, meetingId);
+  const { tx, meta } = keysFor(platform, meetingId, sessionId);
   const got = await chrome.storage.local.get([tx, meta]);
   const lines = got[tx] || [];
   if (lines.length === 0) return { ok: false, error: 'empty transcript' };
   const record = got[meta];
-  const body = '\uFEFF' + lines.join('\n') + '\n';
+  const body = buildMarkdown(platform, meetingId, record, lines) + '\n';
   const b64 = utf8ToBase64(body);
-  const url = `data:text/plain;charset=utf-8;base64,${b64}`;
+  const url = `data:text/markdown;charset=utf-8;base64,${b64}`;
   const prefix = platform || 'meet';
   const start = record && record.firstSeenAt ? new Date(record.firstSeenAt) : new Date();
   const { date, time } = dateParts(start);
@@ -179,7 +251,7 @@ async function finalizeAndDownload(platform, meetingId) {
       ? record.participants
       : extractParticipants(lines);
   const parts = formatParticipants(sourceNames);
-  const filename = `${prefix}_${date}_${time}_${parts}_${meetingId}.txt`;
+  const filename = `${prefix}_${date}_${time}_${parts}_${meetingId}.md`;
   try {
     const id = await chrome.downloads.download({ url, filename, saveAs: false });
     if (record) {
