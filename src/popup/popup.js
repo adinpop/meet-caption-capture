@@ -80,7 +80,12 @@ function setToggleButton(mode) {
   }
 }
 
+let audioButtonMode = 'disabled';
+let audioButtonReason = '';
+
 function setAudioButton(mode, info) {
+  audioButtonMode = mode;
+  audioButtonReason = info || '';
   if (mode === 'stop') {
     toggleAudioBtn.textContent = 'Stop audio';
     toggleAudioBtn.className = 'primary stop';
@@ -91,11 +96,17 @@ function setAudioButton(mode, info) {
     toggleAudioBtn.className = 'primary';
     toggleAudioBtn.disabled = false;
     toggleAudioBtn.removeAttribute('title');
+  } else if (mode === 'needs-key') {
+    // Clickable even without a key: opens Options so the user is never stuck.
+    toggleAudioBtn.textContent = 'Set API key to record';
+    toggleAudioBtn.className = 'primary';
+    toggleAudioBtn.disabled = false;
+    toggleAudioBtn.title = info || 'Opens Options to paste your OpenAI API key';
   } else {
     toggleAudioBtn.textContent = 'Record audio';
     toggleAudioBtn.className = 'primary';
     toggleAudioBtn.disabled = true;
-    toggleAudioBtn.title = info || 'Requires an OpenAI API key (Options)';
+    toggleAudioBtn.title = info || '';
   }
 }
 
@@ -135,9 +146,10 @@ async function refresh() {
     setStatus('No meeting tab', 'status-idle');
     meetingEl.textContent = '—';
     lineCountEl.textContent = '0';
-    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key — click Options';
     setToggleButton('disabled');
-    setAudioButton('disabled', 'Open a Meet or Teams tab first');
+    if (!hasKey) setAudioButton('needs-key');
+    else setAudioButton('disabled', 'Open a Meet or Teams tab first');
     lastState = null;
     lastAudio = null;
     return;
@@ -147,14 +159,11 @@ async function refresh() {
     setStatus('Waiting for captions', 'status-waiting');
     meetingEl.textContent = '—';
     lineCountEl.textContent = '0';
-    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key — click Options';
     setToggleButton('disabled');
-    if (hasKey) {
-      setAudioButton('start', 'Click to record audio even without captions');
-    } else {
-      setAudioButton('disabled', 'Save an OpenAI key in Options first');
-    }
-    setMsg('Turn on captions in the meeting, or just click Record audio to capture with Whisper only.', 'info');
+    if (hasKey) setAudioButton('start', 'Click to record audio even without captions');
+    else setAudioButton('needs-key');
+    setMsg('Turn on captions in the meeting, or click Record audio to capture with Whisper only.', 'info');
     lastState = null;
     lastAudio = null;
     return;
@@ -191,7 +200,7 @@ async function refresh() {
     renderAudioStatus(audio, hasKey);
 
     if (!hasKey) {
-      setAudioButton('disabled', 'Save an OpenAI key in Options first');
+      setAudioButton('needs-key');
     } else if (audio && audio.meta && audio.meta.state === 'recording') {
       setAudioButton('stop');
     } else {
@@ -201,14 +210,20 @@ async function refresh() {
     meetingEl.textContent = '—';
     setStatus('No active meeting', 'status-idle');
     lineCountEl.textContent = '0';
-    audioStatusEl.textContent = hasKey ? 'off' : 'no key (open Options)';
+    audioStatusEl.textContent = hasKey ? 'off' : 'no key — click Options';
     setToggleButton('disabled');
-    setAudioButton('disabled', 'No active meeting');
+    if (!hasKey) setAudioButton('needs-key');
+    else setAudioButton('disabled', 'Join the meeting first');
   }
 }
 
 toggleAudioBtn.addEventListener('click', async () => {
   setMsg('');
+  if (audioButtonMode === 'needs-key') {
+    if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+    else chrome.tabs.create({ url: chrome.runtime.getURL('src/options/options.html') });
+    return;
+  }
   const tab = await getActiveSupportedTab();
   if (!tab) {
     setMsg('Open a Meet or Teams tab first.', 'error');
