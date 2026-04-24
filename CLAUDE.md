@@ -5,7 +5,7 @@ Chrome MV3 extension that captures live captions from Google Meet and Microsoft 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.6.0. SW is ES module.
+manifest.json                         MV3 manifest, v0.6.1. SW is ES module.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
   content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
@@ -68,7 +68,8 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.3.0**: durability (direct rolling writes), history browser, real Teams selectors.
 - **0.4.0**: Markdown output with YAML frontmatter (date, time, duration, participants, DOM-scraped meeting title). Filename extension `.md`.
 - **0.5.0**: per-session storage keys so recurring meetings no longer append across days. 15-min gap auto-cuts a new session; popup **Stop capture** / **Start capture** buttons give manual control. History browser shows one row per session.
-- **0.6.0** (current): opt-in audio capture of the active meeting tab + Whisper transcription. Offscreen document owns the MediaStream, MediaRecorder slices at 30 s into IndexedDB, service worker ships chunks to `api.openai.com/v1/audio/transcriptions`. Combined Markdown export with `## Captions transcript` and `## Audio transcript (Whisper)` sections. Options page for API key. Service worker now an ES module.
+- **0.6.0**: opt-in audio capture of the active meeting tab + Whisper transcription. Offscreen document owns the MediaStream, MediaRecorder slices at 30 s into IndexedDB, service worker ships chunks to `api.openai.com/v1/audio/transcriptions`. Combined Markdown export with `## Captions transcript` and `## Audio transcript (Whisper)` sections. Options page for API key. Service worker now an ES module.
+- **0.6.1** (current): Record audio UX fixes. Button no longer stays disabled when captions haven't fired a session yet (falls back to minting a session on BEGIN_AUDIO and infers meetingId from the tab URL). When no API key is saved, the button flips to "Set API key to record" and opens Options on click instead of silently disabling. Recycles the offscreen doc (stop + close + brief delay) before each capture start so a leftover stream cannot cause `Cannot capture a tab with an active stream`.
 
 ## Build and install
 
