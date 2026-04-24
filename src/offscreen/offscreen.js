@@ -1,8 +1,14 @@
 // Offscreen document. Owns the captured MediaStream and MediaRecorder for the
 // active audio recording. The service worker creates this doc, messages us
 // with a tab streamId, we open the stream, chunk to IndexedDB, and notify the
-// service worker per chunk. The service worker is the only piece that talks to
-// OpenAI, so the API key never enters this document.
+// service worker per chunk. The service worker is the only piece that talks
+// to OpenAI, so the API key never enters this document.
+//
+// Chunking strategy: a fresh MediaRecorder is started for each 30 s window.
+// When the timer fires we stop the recorder, which flushes a complete,
+// standalone WebM blob (with its own header). Only that lets Whisper decode
+// each chunk independently. Using MediaRecorder.start(timeslice) does NOT
+// work here because subsequent timeslices are header-less and fail to decode.
 
 import { putChunk } from '../lib/audio-db.js';
 
@@ -13,30 +19,116 @@ const TARGET = 'offscreen';
 
 const state = {
   stream: null,
-  recorder: null,
   audioCtx: null,
+  recorder: null,
+  chunkTimer: null,
   sessionId: null,
   platform: null,
   meetingId: null,
   chunkIndex: 0,
   startedAt: 0,
   closing: false,
+  stopResolvers: [],
 };
 
 function resetState() {
   state.stream = null;
-  state.recorder = null;
   state.audioCtx = null;
+  state.recorder = null;
+  state.chunkTimer = null;
   state.sessionId = null;
   state.platform = null;
   state.meetingId = null;
   state.chunkIndex = 0;
   state.startedAt = 0;
   state.closing = false;
+  state.stopResolvers = [];
+}
+
+function pickMimeType() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+  ];
+  for (const c of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return null;
+}
+
+async function handleChunkBlob(blob) {
+  if (!blob || !blob.size) return;
+  const index = state.chunkIndex++;
+  const offsetMs = Date.now() - state.startedAt;
+  try {
+    await putChunk({
+      sessionId: state.sessionId,
+      chunkIndex: index,
+      platform: state.platform,
+      meetingId: state.meetingId,
+      blob,
+      offsetMs,
+    });
+  } catch (e) {
+    log('putChunk failed', e && e.message);
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'AUDIO_CHUNK',
+      sessionId: state.sessionId,
+      chunkIndex: index,
+      platform: state.platform,
+      meetingId: state.meetingId,
+    });
+  } catch (e) {
+    log('notify failed (chunk persisted)', e && e.message);
+  }
+}
+
+function startNextRecorder() {
+  if (state.closing || !state.stream) return;
+  const mimeType = pickMimeType();
+  const recorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
+  state.recorder = recorder;
+
+  let finalBlob = null;
+  recorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) finalBlob = ev.data;
+  };
+  recorder.onerror = (ev) => log('recorder error', ev && ev.error);
+  recorder.onstop = async () => {
+    if (state.chunkTimer) {
+      clearTimeout(state.chunkTimer);
+      state.chunkTimer = null;
+    }
+    await handleChunkBlob(finalBlob);
+    if (state.closing) {
+      state.recorder = null;
+      const resolvers = state.stopResolvers.splice(0);
+      for (const r of resolvers) r();
+      return;
+    }
+    startNextRecorder();
+  };
+
+  try {
+    recorder.start();
+  } catch (e) {
+    log('recorder.start threw', e && e.message);
+    return;
+  }
+
+  state.chunkTimer = setTimeout(() => {
+    try {
+      if (state.recorder && state.recorder.state === 'recording') state.recorder.stop();
+    } catch (e) {}
+  }, CHUNK_MS);
 }
 
 async function startCapture({ streamId, sessionId, platform, meetingId }) {
-  if (state.recorder) {
+  if (state.recorder || state.stream) {
     throw new Error('already recording');
   }
   log('startCapture', { sessionId, platform, meetingId });
@@ -51,51 +143,10 @@ async function startCapture({ streamId, sessionId, platform, meetingId }) {
     video: false,
   });
 
-  // Route the captured audio to the speakers so the user keeps hearing the
-  // call. Without this, grabbing a tab stream mutes the tab for the user.
+  // Route the captured audio to speakers so the user still hears the call.
   const audioCtx = new AudioContext();
   const src = audioCtx.createMediaStreamSource(stream);
   src.connect(audioCtx.destination);
-
-  const mimeType = pickMimeType();
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
-  recorder.ondataavailable = async (ev) => {
-    if (!ev.data || ev.data.size === 0) return;
-    const index = state.chunkIndex++;
-    const offsetMs = Date.now() - state.startedAt;
-    try {
-      await putChunk({
-        sessionId: state.sessionId,
-        chunkIndex: index,
-        platform: state.platform,
-        meetingId: state.meetingId,
-        blob: ev.data,
-        offsetMs,
-      });
-    } catch (e) {
-      log('putChunk failed', e);
-      return;
-    }
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'AUDIO_CHUNK',
-        sessionId: state.sessionId,
-        chunkIndex: index,
-        platform: state.platform,
-        meetingId: state.meetingId,
-      });
-    } catch (e) {
-      // service worker may be warming up; chunk is safe in IndexedDB and
-      // will be picked up when the SW drains.
-      log('notify failed (chunk persisted)', e && e.message);
-    }
-  };
-
-  recorder.onerror = (ev) => log('recorder error', ev && ev.error);
-  recorder.onstop = () => {
-    log('recorder stopped, total chunks', state.chunkIndex);
-  };
 
   stream.getAudioTracks().forEach((t) => {
     t.onended = () => {
@@ -105,39 +156,40 @@ async function startCapture({ streamId, sessionId, platform, meetingId }) {
   });
 
   state.stream = stream;
-  state.recorder = recorder;
   state.audioCtx = audioCtx;
   state.sessionId = sessionId;
   state.platform = platform;
   state.meetingId = meetingId;
   state.chunkIndex = 0;
   state.startedAt = Date.now();
+  state.closing = false;
 
-  recorder.start(CHUNK_MS);
+  startNextRecorder();
   return { ok: true, startedAt: state.startedAt };
 }
 
 async function stopCapture(reason) {
-  if (!state.recorder || state.closing) return { ok: true, alreadyStopped: true };
+  if (!state.stream && !state.recorder) return { ok: true, alreadyStopped: true };
+  if (state.closing) {
+    // Another stop is in flight. Wait for it.
+    await new Promise((r) => state.stopResolvers.push(r));
+    return { ok: true };
+  }
   state.closing = true;
   log('stopCapture', reason || 'user');
 
-  const finalFlush = new Promise((resolve) => {
-    if (state.recorder.state === 'inactive') return resolve();
-    const handler = () => {
-      state.recorder.removeEventListener('stop', handler);
-      resolve();
-    };
-    state.recorder.addEventListener('stop', handler);
-    try {
-      state.recorder.stop();
-    } catch (e) {
-      log('stop threw', e);
-      resolve();
-    }
-  });
+  if (state.chunkTimer) {
+    clearTimeout(state.chunkTimer);
+    state.chunkTimer = null;
+  }
 
-  await finalFlush;
+  if (state.recorder && state.recorder.state !== 'inactive') {
+    await new Promise((resolve) => {
+      state.stopResolvers.push(resolve);
+      try { state.recorder.stop(); }
+      catch (e) { log('stop threw', e); resolve(); }
+    });
+  }
 
   try { state.stream && state.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
   try { state.audioCtx && await state.audioCtx.close(); } catch (e) {}
@@ -160,18 +212,6 @@ async function stopCapture(reason) {
   } catch (e) {}
 
   return { ok: true, chunkCount };
-}
-
-function pickMimeType() {
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-  ];
-  for (const c of candidates) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c)) return c;
-  }
-  return null;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {

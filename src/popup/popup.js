@@ -112,11 +112,13 @@ function setAudioButton(mode, info) {
 
 function renderAudioStatus(audio, hasKey) {
   if (!hasKey) {
-    audioStatusEl.textContent = 'no key (open Options)';
+    audioStatusEl.textContent = 'no key — click Options';
+    audioStatusEl.removeAttribute('title');
     return;
   }
   if (!audio || !audio.meta) {
     audioStatusEl.textContent = 'off';
+    audioStatusEl.removeAttribute('title');
     return;
   }
   const m = audio.meta;
@@ -126,6 +128,8 @@ function renderAudioStatus(audio, hasKey) {
   if (audio.pending) bits.push(`${audio.pending} pending`);
   if (audio.failed) bits.push(`${audio.failed} failed`);
   audioStatusEl.textContent = bits.join(' · ');
+  if (m.lastError) audioStatusEl.title = 'last error: ' + m.lastError;
+  else audioStatusEl.removeAttribute('title');
 }
 
 async function getApiKeyPresent() {
