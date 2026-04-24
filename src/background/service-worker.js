@@ -474,7 +474,7 @@ async function beginAudio({ tabId, platform, meetingId, sessionId }) {
     lastTail: '',
     lastError: null,
   });
-  return { ok: true };
+  return { ok: true, sessionId };
 }
 
 async function endAudio({ platform, meetingId, sessionId }) {
@@ -608,12 +608,31 @@ async function processPendingChunks(platform, meetingId, sessionId) {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function getAudioState({ platform, meetingId, sessionId }) {
+  // If the caller doesn't know the sessionId (common when audio started
+  // without captions), look up the most recent recording session for this
+  // meeting.
+  if (!sessionId && platform && meetingId) {
+    const prefix = PREFIX_AUDIO_META + `${platform}:${meetingId}:`;
+    const all = await chrome.storage.local.get(null);
+    let best = null;
+    for (const key of Object.keys(all)) {
+      if (!key.startsWith(prefix)) continue;
+      const rec = all[key];
+      if (!rec) continue;
+      const score = rec.state === 'recording' ? 2 : rec.state === 'transcribing' ? 1 : 0;
+      const ts = rec.lastUpdatedAt || rec.stoppedAt || rec.startedAt || 0;
+      if (!best || score > best.score || (score === best.score && ts > best.ts)) {
+        best = { rec, score, ts, sessionId: key.slice(prefix.length) };
+      }
+    }
+    if (best) sessionId = best.sessionId;
+  }
   if (!sessionId) return { ok: true, meta: null, pending: 0, failed: 0 };
   const meta = await getAudioMeta(platform, meetingId, sessionId);
   const rows = await listBySession(sessionId);
   const pending = rows.filter((r) => r.status === 'pending').length;
   const failed = rows.filter((r) => r.status === 'failed').length;
-  return { ok: true, meta, pending, failed };
+  return { ok: true, meta, pending, failed, sessionId };
 }
 
 async function retryFailedChunks({ sessionId }) {

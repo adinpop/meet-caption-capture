@@ -159,13 +159,40 @@ async function refresh() {
     setStatus('Waiting for captions', 'status-waiting');
     meetingEl.textContent = '—';
     lineCountEl.textContent = '0';
-    audioStatusEl.textContent = hasKey ? 'off' : 'no key — click Options';
     setToggleButton('disabled');
-    if (hasKey) setAudioButton('start', 'Click to record audio even without captions');
-    else setAudioButton('needs-key');
+
+    // Even without the content script, an audio session may already be
+    // recording (captions-off scenario). Inspect the tab URL and ask the SW.
+    let urlPlatform = null, urlMeetingId = null;
+    try {
+      const u = new URL(tab.url);
+      if (u.host === 'meet.google.com') {
+        urlPlatform = 'meet';
+        const m = u.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/);
+        urlMeetingId = m ? m[1] : null;
+      } else if (u.host.startsWith('teams.')) {
+        urlPlatform = 'teams';
+        const thread = u.searchParams.get('threadId') || u.searchParams.get('context');
+        if (thread) urlMeetingId = thread.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+      }
+    } catch (e) {}
+
+    let audio = null;
+    if (urlPlatform && urlMeetingId) {
+      audio = await chrome.runtime.sendMessage({
+        type: 'GET_AUDIO_STATE',
+        platform: urlPlatform,
+        meetingId: urlMeetingId,
+      });
+    }
+    lastAudio = audio;
+    renderAudioStatus(audio, hasKey);
+
+    if (!hasKey) setAudioButton('needs-key');
+    else if (audio && audio.meta && audio.meta.state === 'recording') setAudioButton('stop');
+    else setAudioButton('start', 'Click to record audio even without captions');
     setMsg('Turn on captions in the meeting, or click Record audio to capture with Whisper only.', 'info');
     lastState = null;
-    lastAudio = null;
     return;
   }
   lastState = state;
@@ -190,11 +217,13 @@ async function refresh() {
     });
     lineCountEl.textContent = String(res && res.lines ? res.lines.length : 0);
 
+    // Ask by (platform, meetingId) so the SW can find the active audio
+    // session even when captions haven't minted one yet.
     const audio = await chrome.runtime.sendMessage({
       type: 'GET_AUDIO_STATE',
       platform: state.platform,
       meetingId: state.meetingId,
-      sessionId: state.sessionId,
+      sessionId: state.sessionId || null,
     });
     lastAudio = audio;
     renderAudioStatus(audio, hasKey);
@@ -262,11 +291,15 @@ toggleAudioBtn.addEventListener('click', async () => {
 
   toggleAudioBtn.disabled = true;
   if (isRecording) {
+    const audioSessionId =
+      (audio && audio.meta && audio.meta.sessionId) ||
+      (audio && audio.sessionId) ||
+      sessionId;
     const r = await chrome.runtime.sendMessage({
       type: 'END_AUDIO',
       platform,
       meetingId,
-      sessionId: (audio && audio.meta && audio.meta.sessionId) || sessionId,
+      sessionId: audioSessionId,
     });
     if (r && r.ok) setMsg('Audio recording stopped. Remaining chunks will transcribe in the background.', 'ok');
     else setMsg('Could not stop audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
