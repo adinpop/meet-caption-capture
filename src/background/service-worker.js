@@ -388,6 +388,22 @@ async function closeOffscreen() {
   } catch (e) {}
 }
 
+// Stop any active capture in the offscreen doc, close the doc, and give the
+// browser a moment to release the underlying tabCapture stream before the
+// next getMediaStreamId call.
+async function cleanupOffscreen() {
+  let hadDoc = false;
+  try { hadDoc = await chrome.offscreen.hasDocument(); } catch (e) {}
+  if (!hadDoc) return;
+  try {
+    await chrome.runtime.sendMessage({ target: 'offscreen', type: 'STOP_CAPTURE' });
+  } catch (e) {}
+  await closeOffscreen();
+  // Brief delay; empirically Chrome needs a tick before it will hand out a
+  // fresh streamId for the same tab.
+  await new Promise((r) => setTimeout(r, 250));
+}
+
 async function getAudioMeta(platform, meetingId, sessionId) {
   const { meta } = audioKeysFor(platform, meetingId, sessionId);
   const got = await chrome.storage.local.get(meta);
@@ -411,6 +427,12 @@ async function beginAudio({ tabId, platform, meetingId, sessionId }) {
   if (existing && existing.state === 'recording') {
     return { ok: false, error: 'already recording this session' };
   }
+
+  // Tear down any leftover offscreen session. Chrome only allows one active
+  // tabCapture stream per tab, so a stale stream held by a prior attempt
+  // would make getMediaStreamId fail with "Cannot capture a tab with an
+  // active stream."
+  await cleanupOffscreen();
 
   let streamId;
   try {
