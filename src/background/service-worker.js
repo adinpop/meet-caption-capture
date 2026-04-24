@@ -14,12 +14,14 @@
 
 import { transcribeBlob, WhisperError } from '../lib/whisper.js';
 import { listBySession, deleteChunk, deleteBySession, markFailed, markPending } from '../lib/audio-db.js';
+import { summarize, SummaryError, DEFAULT_SUMMARY_SETTINGS, ALL_SECTIONS } from '../lib/summarize.js';
 
 const PREFIX_TX = 'transcript:';
 const PREFIX_META = 'meta:';
 const PREFIX_PARTIAL = 'partial:';
 const PREFIX_AUDIO_TX = 'audio_transcript:';
 const PREFIX_AUDIO_META = 'audio_meta:';
+const PREFIX_SUMMARY = 'summary:';
 
 const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
 
@@ -39,6 +41,11 @@ function audioKeysFor(platform, meetingId, sessionId) {
     tx: PREFIX_AUDIO_TX + suffix,
     meta: PREFIX_AUDIO_META + suffix,
   };
+}
+
+function summaryKey(platform, meetingId, sessionId) {
+  const suffix = sessionId ? `${platform || 'unknown'}:${meetingId}:${sessionId}` : `${platform || 'unknown'}:${meetingId}`;
+  return PREFIX_SUMMARY + suffix;
 }
 
 function splitSuffix(rest) {
@@ -88,6 +95,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return handle(() => onAudioChunk(msg));
     case 'AUDIO_STOPPED':
       return handle(() => onAudioStopped(msg));
+
+    case 'SUMMARIZE_SESSION':
+      return handle(() => summarizeSession(msg));
+    case 'GET_SUMMARY':
+      return handle(() => getSummary(msg));
+    case 'DELETE_SUMMARY':
+      return handle(() => deleteSummary(msg));
   }
 });
 
@@ -104,7 +118,8 @@ async function clearTranscript(platform, meetingId, sessionId) {
   if (!meetingId) return;
   const { tx, meta, partial } = keysFor(platform, meetingId, sessionId);
   const { tx: atx, meta: ameta } = audioKeysFor(platform, meetingId, sessionId);
-  await chrome.storage.local.remove([tx, meta, partial, atx, ameta]);
+  const sKey = summaryKey(platform, meetingId, sessionId);
+  await chrome.storage.local.remove([tx, meta, partial, atx, ameta, sKey]);
   if (sessionId) {
     try { await deleteBySession(sessionId); } catch (e) {}
   }
@@ -117,7 +132,8 @@ async function clearAll() {
            k.startsWith(PREFIX_META) ||
            k.startsWith(PREFIX_PARTIAL) ||
            k.startsWith(PREFIX_AUDIO_TX) ||
-           k.startsWith(PREFIX_AUDIO_META)
+           k.startsWith(PREFIX_AUDIO_META) ||
+           k.startsWith(PREFIX_SUMMARY)
   );
   if (keys.length) await chrome.storage.local.remove(keys);
   // Wipe any orphan IDB chunks too. Best-effort.
@@ -149,7 +165,12 @@ async function listMeetings() {
   const byKey = new Map(); // `${platform}:${meetingId}:${sessionId||''}` → row
   const touch = (platform, meetingId, sessionId, fields) => {
     const k = `${platform}:${meetingId}:${sessionId || ''}`;
-    const existing = byKey.get(k) || { platform, meetingId, sessionId, lineCount: 0, audioLineCount: 0, meta: null, audioMeta: null };
+    const existing = byKey.get(k) || {
+      platform, meetingId, sessionId,
+      lineCount: 0, audioLineCount: 0,
+      meta: null, audioMeta: null,
+      hasSummary: false, summaryGeneratedAt: null,
+    };
     Object.assign(existing, fields);
     byKey.set(k, existing);
   };
@@ -167,6 +188,13 @@ async function listMeetings() {
       touch(platform, meetingId, sessionId, {
         audioLineCount: Array.isArray(all[key]) ? all[key].length : 0,
         audioMeta: all[aMetaKey] || null,
+      });
+    } else if (key.startsWith(PREFIX_SUMMARY)) {
+      const { platform, meetingId, sessionId } = splitSuffix(key.slice(PREFIX_SUMMARY.length));
+      const rec = all[key] || {};
+      touch(platform, meetingId, sessionId, {
+        hasSummary: true,
+        summaryGeneratedAt: rec.generatedAt || null,
       });
     }
   }
@@ -214,7 +242,62 @@ function yamlString(s) {
   return '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
-function buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta) {
+function renderSummarySections(summary) {
+  if (!summary) return [];
+  const enabled = Array.isArray(summary.enabled_sections) && summary.enabled_sections.length
+    ? summary.enabled_sections
+    : ALL_SECTIONS;
+  const want = new Set(enabled);
+  const out = [];
+  const pushHeader = (h) => { out.push(h); out.push(''); };
+
+  if (want.has('summary') && summary.summary) {
+    pushHeader('## Summary');
+    out.push(summary.summary.trim());
+    out.push('');
+  }
+  if (want.has('topics') && Array.isArray(summary.topics) && summary.topics.length) {
+    pushHeader('## Topics discussed');
+    for (const t of summary.topics) out.push(`- ${t}`);
+    out.push('');
+  }
+  if (want.has('decisions') && Array.isArray(summary.decisions) && summary.decisions.length) {
+    pushHeader('## Decisions');
+    for (const d of summary.decisions) out.push(`- ${d}`);
+    out.push('');
+  }
+  if (want.has('actions') && Array.isArray(summary.actions) && summary.actions.length) {
+    pushHeader('## Action items');
+    for (const a of summary.actions) {
+      const parts = [];
+      if (a.owner) parts.push(`owner: ${a.owner}`);
+      if (a.due) parts.push(`due: ${a.due}`);
+      const meta = parts.length ? ` (${parts.join(', ')})` : '';
+      out.push(`- [ ] ${a.task}${meta}`);
+    }
+    out.push('');
+  }
+  if (want.has('blind_spots') && Array.isArray(summary.blind_spots) && summary.blind_spots.length) {
+    pushHeader('## Blind spots');
+    for (const b of summary.blind_spots) out.push(`- ${b}`);
+    out.push('');
+  }
+  if (want.has('opportunities') && Array.isArray(summary.opportunities) && summary.opportunities.length) {
+    pushHeader('## Opportunities');
+    for (const o of summary.opportunities) out.push(`- ${o}`);
+    out.push('');
+  }
+  if (out.length) {
+    const stamp = summary.generatedAt ? new Date(summary.generatedAt).toISOString() : '';
+    if (stamp) {
+      out.push(`*Summary generated ${stamp} by ${summary.model || 'OpenAI'}.*`);
+      out.push('');
+    }
+  }
+  return out;
+}
+
+function buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta, summary) {
   const start = record && record.firstSeenAt ? new Date(record.firstSeenAt)
               : audioMeta && audioMeta.startedAt ? new Date(audioMeta.startedAt)
               : new Date();
@@ -254,11 +337,15 @@ function buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta
   const sources = [];
   if (lines && lines.length > 0) sources.push('captions');
   if (audioLines && audioLines.length > 0) sources.push('whisper');
+  if (summary) sources.push('summary');
   if (sources.length) out.push(`sources: [${sources.join(', ')}]`);
   out.push('---');
   out.push('');
   out.push(`# ${title || 'Meeting transcript'}`);
   out.push('');
+
+  const summarySections = renderSummarySections(summary);
+  if (summarySections.length) out.push(...summarySections);
 
   const LINE_RE = /^\[(\d{2}:\d{2}:\d{2})\]\s+([^:]+):\s*([\s\S]*)$/;
 
@@ -334,14 +421,16 @@ async function finalizeAndDownload(platform, meetingId, sessionId) {
   if (!meetingId) return { ok: false, error: 'no meetingId' };
   const { tx, meta } = keysFor(platform, meetingId, sessionId);
   const { tx: atx, meta: ameta } = audioKeysFor(platform, meetingId, sessionId);
-  const got = await chrome.storage.local.get([tx, meta, atx, ameta]);
+  const sKey = summaryKey(platform, meetingId, sessionId);
+  const got = await chrome.storage.local.get([tx, meta, atx, ameta, sKey]);
   const lines = got[tx] || [];
   const audioLines = got[atx] || [];
   if (lines.length === 0 && audioLines.length === 0) return { ok: false, error: 'empty transcript' };
   const record = got[meta];
   const audioMeta = got[ameta];
+  const summary = got[sKey] || null;
 
-  const body = buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta) + '\n';
+  const body = buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta, summary) + '\n';
   const b64 = utf8ToBase64(body);
   const url = `data:text/markdown;charset=utf-8;base64,${b64}`;
   const prefix = platform || 'meet';
@@ -359,10 +448,24 @@ async function finalizeAndDownload(platform, meetingId, sessionId) {
       record.downloadedAt = Date.now();
       await chrome.storage.local.set({ [meta]: record });
     }
+    maybeAutoSummarize(platform, meetingId, sessionId);
     return { ok: true, filename, lineCount: lines.length, audioLineCount: audioLines.length, downloadId: id };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
+}
+
+function maybeAutoSummarize(platform, meetingId, sessionId) {
+  (async () => {
+    try {
+      const settings = await getSummarySettings();
+      if (!settings.auto_run) return;
+      const sKey = summaryKey(platform, meetingId, sessionId);
+      const got = await chrome.storage.local.get(sKey);
+      if (got && got[sKey]) return; // already summarized
+      await summarizeSession({ platform, meetingId, sessionId });
+    } catch (e) {}
+  })();
 }
 
 // -------------------- audio pipeline --------------------
@@ -648,6 +751,101 @@ async function retryFailedChunks({ sessionId }) {
     drain(first.platform, first.meetingId, sessionId).catch(() => {});
   }
   return { ok: true, retried: failed.length };
+}
+
+// -------------------- summarization --------------------
+
+function buildTranscriptForSummary(captionLines, audioLines) {
+  const out = [];
+  if (captionLines && captionLines.length) {
+    out.push('=== Captions transcript (with speaker labels) ===');
+    out.push(...captionLines);
+  }
+  if (audioLines && audioLines.length) {
+    if (out.length) out.push('');
+    out.push('=== Audio transcript (Whisper; no speaker labels) ===');
+    out.push(...audioLines);
+  }
+  return out.join('\n');
+}
+
+async function getSummarySettings() {
+  const got = await chrome.storage.local.get('summarySettings');
+  const stored = got && got.summarySettings ? got.summarySettings : {};
+  return {
+    enabled_sections: Array.isArray(stored.enabled_sections) ? stored.enabled_sections : DEFAULT_SUMMARY_SETTINGS.enabled_sections,
+    model: stored.model || DEFAULT_SUMMARY_SETTINGS.model,
+    prompt: stored.prompt || DEFAULT_SUMMARY_SETTINGS.prompt,
+    auto_run: !!stored.auto_run,
+  };
+}
+
+async function summarizeSession({ platform, meetingId, sessionId }) {
+  if (!meetingId) return { ok: false, error: 'no meetingId' };
+  const { tx, meta } = keysFor(platform, meetingId, sessionId);
+  const { tx: atx } = audioKeysFor(platform, meetingId, sessionId);
+  const got = await chrome.storage.local.get([tx, meta, atx]);
+  const captionLines = got[tx] || [];
+  const audioLines = got[atx] || [];
+  if (captionLines.length === 0 && audioLines.length === 0) {
+    return { ok: false, error: 'no transcript to summarize yet' };
+  }
+
+  const { apiKey } = await chrome.storage.local.get('apiKey');
+  if (!apiKey) return { ok: false, error: 'no api key. open Options and save an OpenAI key.' };
+
+  const settings = await getSummarySettings();
+  const transcript = buildTranscriptForSummary(captionLines, audioLines);
+
+  let result;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await summarize(apiKey, transcript, { prompt: settings.prompt, model: settings.model });
+        break;
+      } catch (e) {
+        if (e instanceof SummaryError && e.retryable && attempt === 0) {
+          await sleep(750);
+          continue;
+        }
+        throw e;
+      }
+    }
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'summary failed' };
+  }
+
+  const record = {
+    platform, meetingId, sessionId,
+    generatedAt: Date.now(),
+    model: settings.model,
+    enabled_sections: settings.enabled_sections,
+    summary: result.summary,
+    topics: result.topics,
+    decisions: result.decisions,
+    actions: result.actions,
+    blind_spots: result.blind_spots,
+    opportunities: result.opportunities,
+    sourceMeta: {
+      captionLineCount: captionLines.length,
+      audioLineCount: audioLines.length,
+      title: (got[meta] && got[meta].title) || '',
+    },
+  };
+  await chrome.storage.local.set({ [summaryKey(platform, meetingId, sessionId)]: record });
+  return { ok: true, summary: record };
+}
+
+async function getSummary({ platform, meetingId, sessionId }) {
+  const key = summaryKey(platform, meetingId, sessionId);
+  const got = await chrome.storage.local.get(key);
+  return { ok: true, summary: got[key] || null };
+}
+
+async function deleteSummary({ platform, meetingId, sessionId }) {
+  const key = summaryKey(platform, meetingId, sessionId);
+  await chrome.storage.local.remove(key);
+  return { ok: true };
 }
 
 // On SW wake, attempt to drain any sessions that have pending chunks left

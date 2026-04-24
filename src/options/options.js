@@ -1,3 +1,5 @@
+import { DEFAULT_PROMPT, DEFAULT_MODEL, DEFAULT_SUMMARY_SETTINGS, ALL_SECTIONS } from '../lib/summarize.js';
+
 const hasKeyEl = document.getElementById('has-key');
 const noKeyEl = document.getElementById('no-key');
 const keyDisplayEl = document.getElementById('key-display');
@@ -79,4 +81,70 @@ removeBtn.addEventListener('click', async () => {
   await render();
 });
 
+// -------------------- summary settings --------------------
+
+const sectionsRoot = document.getElementById('sections');
+const modelSel = document.getElementById('summary-model');
+const promptEl = document.getElementById('summary-prompt');
+const autoEl = document.getElementById('summary-auto');
+const resetPromptBtn = document.getElementById('reset-prompt');
+const saveSummaryBtn = document.getElementById('save-summary');
+const summaryStatusEl = document.getElementById('summary-status');
+
+function setSummaryStatus(text, kind) {
+  summaryStatusEl.textContent = text || '';
+  summaryStatusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function renderSummarySettings() {
+  const got = await chrome.storage.local.get('summarySettings');
+  const s = Object.assign({}, DEFAULT_SUMMARY_SETTINGS, got && got.summarySettings ? got.summarySettings : {});
+  const enabled = new Set(Array.isArray(s.enabled_sections) ? s.enabled_sections : DEFAULT_SUMMARY_SETTINGS.enabled_sections);
+  for (const input of sectionsRoot.querySelectorAll('input[type="checkbox"]')) {
+    input.checked = enabled.has(input.value);
+  }
+  modelSel.value = s.model || DEFAULT_MODEL;
+  if (![...modelSel.options].some((o) => o.value === modelSel.value)) {
+    // custom model from storage: add an option on the fly
+    const opt = document.createElement('option');
+    opt.value = s.model;
+    opt.textContent = s.model + ' (custom)';
+    modelSel.appendChild(opt);
+    modelSel.value = s.model;
+  }
+  promptEl.value = s.prompt || DEFAULT_PROMPT;
+  autoEl.checked = !!s.auto_run;
+}
+
+resetPromptBtn.addEventListener('click', () => {
+  promptEl.value = DEFAULT_PROMPT;
+  setSummaryStatus('Prompt reset to default. Click Save settings to persist.', 'info');
+});
+
+saveSummaryBtn.addEventListener('click', async () => {
+  const enabled_sections = [];
+  for (const input of sectionsRoot.querySelectorAll('input[type="checkbox"]')) {
+    if (input.checked) enabled_sections.push(input.value);
+  }
+  const prompt = (promptEl.value || '').trim();
+  if (!prompt.includes('{{transcript}}')) {
+    setSummaryStatus('Prompt must contain the {{transcript}} placeholder.', 'error');
+    return;
+  }
+  if (enabled_sections.length === 0) {
+    setSummaryStatus('Pick at least one section.', 'error');
+    return;
+  }
+  await chrome.storage.local.set({
+    summarySettings: {
+      enabled_sections,
+      model: modelSel.value || DEFAULT_MODEL,
+      prompt,
+      auto_run: !!autoEl.checked,
+    },
+  });
+  setSummaryStatus('Summary settings saved.', 'ok');
+});
+
 render();
+renderSummarySettings();

@@ -78,6 +78,7 @@ function sourceBadges(item) {
   const badges = [];
   if (item.lineCount > 0) badges.push('<span class="source-badge source-captions">CAPTIONS</span>');
   if (item.audioLineCount > 0) badges.push('<span class="source-badge source-audio">AUDIO</span>');
+  if (item.hasSummary) badges.push('<span class="source-badge source-summary">SUMMARY</span>');
   const am = item.audioMeta;
   if (am && am.state === 'recording') badges.push('<span class="source-badge source-pending">REC</span>');
   else if (am && am.state === 'transcribing') badges.push('<span class="source-badge source-pending">TRANSCRIBING</span>');
@@ -120,6 +121,7 @@ async function render() {
       <td><span class="meeting-id">${escapeHtml(item.meetingId)}</span></td>
       <td class="actions-col">
         <span class="cell-actions">
+          <button class="summarize">${item.hasSummary ? 'Re-summarize' : 'Summarize'}</button>
           <button class="download primary">Download</button>
           <button class="clear danger">Delete</button>
         </span>
@@ -139,6 +141,28 @@ async function render() {
         toast(`Downloaded ${r.filename}`);
       } else {
         toast('Download failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
+      }
+    });
+    tr.querySelector('.summarize').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Summarizing…';
+      const r = await chrome.runtime.sendMessage({
+        type: 'SUMMARIZE_SESSION',
+        platform: item.platform,
+        meetingId: item.meetingId,
+        sessionId: item.sessionId,
+      });
+      if (btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+      if (r && r.ok) {
+        toast('Summary generated.');
+        render();
+      } else {
+        toast('Summary failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
       }
     });
     tr.querySelector('.clear').addEventListener('click', async () => {
