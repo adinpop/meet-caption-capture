@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RUBICON Meet Caption Capture",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Captures Google Meet and Microsoft Teams live captions to a Markdown (.md) file per meeting. Optional audio recording transcribed via OpenAI Whisper. Optional meeting summary with topics, decisions, action items, blind spots, and opportunities.",
   "permissions": ["storage", "downloads", "offscreen", "tabCapture", "activeTab"],
   "host_permissions": [

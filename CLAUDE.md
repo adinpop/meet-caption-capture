@@ -5,7 +5,7 @@ Chrome MV3 extension that captures live captions from Google Meet and Microsoft 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.7.0. SW is ES module.
+manifest.json                         MV3 manifest, v0.7.1. SW is ES module.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
   content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
@@ -73,7 +73,8 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.6.0**: opt-in audio capture of the active meeting tab + Whisper transcription. Offscreen document owns the MediaStream, MediaRecorder slices at 30 s into IndexedDB, service worker ships chunks to `api.openai.com/v1/audio/transcriptions`. Combined Markdown export with `## Captions transcript` and `## Audio transcript (Whisper)` sections. Options page for API key. Service worker now an ES module.
 - **0.6.1**: Record audio UX fixes. Button no longer stays disabled when captions haven't fired a session yet (falls back to minting a session on BEGIN_AUDIO and infers meetingId from the tab URL). When no API key is saved, the button flips to "Set API key to record" and opens Options on click instead of silently disabling. Recycles the offscreen doc (stop + close + brief delay) before each capture start so a leftover stream cannot cause `Cannot capture a tab with an active stream`.
 - **0.6.2**: audio chunks are now standalone WebM files. Earlier versions used `MediaRecorder.start(30000)` which emits header-less segments after the first chunk, so every chunk past the first failed Whisper decode. The offscreen doc now restarts the MediaRecorder per 30 s window, producing a complete standalone file each time. Popup also shows Whisper's last error on hover of the Audio status line.
-- **0.7.0** (current): opt-in meeting summaries. **Summarize** button in the popup and per history row calls chat/completions, stores structured `{summary, topics, decisions, actions, blind_spots, opportunities}` at `summary:...`, and merges matching sections into the `.md` at download time. Transcripts are never modified. Options page gains section pickers, model dropdown, editable prompt, and auto-summarize toggle. History shows a `[SUMMARY]` badge when present.
+- **0.7.0**: opt-in meeting summaries. **Summarize** button in the popup and per history row calls chat/completions, stores structured `{summary, topics, decisions, actions, blind_spots, opportunities}` at `summary:...`, and merges matching sections into the `.md` at download time. Transcripts are never modified. Options page gains section pickers, model dropdown, editable prompt, and auto-summarize toggle. History shows a `[SUMMARY]` badge when present.
+- **0.7.1** (current): filter Material Icons ligatures so glyph identifiers like `arrow_downward` stop getting captured as participants or speakers. The captions DOM walker skips text nodes inside `material-icons` / `google-symbols` elements and rejects snake_case ligature names. `extractParticipants` and `buildMarkdown` also filter at render time, so historic sessions with garbage already saved render cleanly on download.
 
 ## Build and install
 

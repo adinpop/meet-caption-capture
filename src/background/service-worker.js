@@ -314,10 +314,11 @@ function buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta
       ? formatDuration(audioMeta.startedAt, audioMeta.stoppedAt || audioMeta.lastUpdatedAt)
       : '';
   const title = (record && record.title) || '';
-  const sourceNames =
+  const rawNames =
     record && Array.isArray(record.participants) && record.participants.length > 0
       ? record.participants
       : extractParticipants(lines || []);
+  const sourceNames = rawNames.filter((n) => n && !ICON_LIGATURE_RE.test(n));
 
   const out = [];
   out.push('---');
@@ -396,6 +397,8 @@ function camelSanitize(name) {
   return camel.slice(0, 30);
 }
 
+const ICON_LIGATURE_RE = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
+
 function extractParticipants(lines) {
   const seen = new Set();
   const ordered = [];
@@ -404,6 +407,7 @@ function extractParticipants(lines) {
     if (!m) continue;
     const raw = m[1].trim();
     if (!raw || seen.has(raw)) continue;
+    if (ICON_LIGATURE_RE.test(raw)) continue;
     seen.add(raw);
     ordered.push(raw);
   }
