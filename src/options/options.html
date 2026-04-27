@@ -44,6 +44,62 @@
       </section>
 
       <section class="card">
+        <h2>Google Drive auto-save</h2>
+        <p class="hint">
+          When connected, every finalized transcript is uploaded as Markdown to a folder
+          you choose. Re-uploads update the same file in place; Drive keeps revision
+          history automatically. Scopes used:
+          <code>drive.file</code> (only files this extension creates) and
+          <code>drive.metadata.readonly</code> (so the folder picker can list folder
+          names; no file content is ever read).
+        </p>
+
+        <div id="drive-disconnected" class="row" hidden>
+          <div class="grow">
+            <label>Status</label>
+            <div class="masked">Not connected</div>
+          </div>
+          <button id="connect-drive" class="primary">Connect Google Drive</button>
+        </div>
+
+        <div id="drive-connected" hidden>
+          <div class="row">
+            <div class="grow">
+              <label>Connected as</label>
+              <div id="drive-email" class="masked">—</div>
+            </div>
+            <button id="disconnect-drive" class="danger">Disconnect</button>
+          </div>
+
+          <div class="row" style="margin-top: 10px;">
+            <div class="grow">
+              <label>Save folder</label>
+              <div id="drive-folder" class="masked">— No folder selected —</div>
+            </div>
+            <button id="pick-folder">Pick folder</button>
+          </div>
+
+          <div id="drive-picker" class="picker" hidden>
+            <div class="picker-crumbs" id="picker-crumbs"></div>
+            <ul class="picker-list" id="picker-list"></ul>
+            <div class="row" style="margin-top: 8px; justify-content: flex-end;">
+              <button id="picker-cancel">Cancel</button>
+              <button id="picker-select" class="primary" style="margin-left: 6px;">Select this folder</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 12px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <input id="drive-autosave" type="checkbox" />
+              Auto-save every finalized transcript to this folder
+            </label>
+          </div>
+        </div>
+
+        <div id="drive-status" class="status"></div>
+      </section>
+
+      <section class="card" hidden>
         <h2>Summary sections</h2>
         <p class="hint">
           After a meeting, click <strong>Summarize</strong> in the popup to have the transcript

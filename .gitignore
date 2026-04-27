@@ -6,3 +6,8 @@ dist/
 .env.local
 .vscode/
 .idea/
+
+# Extension signing keypair. The public key lives in manifest.json under
+# "key"; the .pem must never be committed.
+.local/
+*.pem

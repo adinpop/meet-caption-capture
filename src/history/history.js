@@ -78,7 +78,10 @@ function sourceBadges(item) {
   const badges = [];
   if (item.lineCount > 0) badges.push('<span class="source-badge source-captions">CAPTIONS</span>');
   if (item.audioLineCount > 0) badges.push('<span class="source-badge source-audio">AUDIO</span>');
-  if (item.hasSummary) badges.push('<span class="source-badge source-summary">SUMMARY</span>');
+  if (item.driveUpload && item.driveUpload.fileId) {
+    const link = item.driveUpload.webViewLink ? ` title="${escapeHtml(item.driveUpload.webViewLink)}"` : '';
+    badges.push(`<span class="source-badge source-drive"${link}>DRIVE</span>`);
+  }
   const am = item.audioMeta;
   if (am && am.state === 'recording') badges.push('<span class="source-badge source-pending">REC</span>');
   else if (am && am.state === 'transcribing') badges.push('<span class="source-badge source-pending">TRANSCRIBING</span>');
@@ -121,7 +124,7 @@ async function render() {
       <td><span class="meeting-id">${escapeHtml(item.meetingId)}</span></td>
       <td class="actions-col">
         <span class="cell-actions">
-          <button class="summarize">${item.hasSummary ? 'Re-summarize' : 'Summarize'}</button>
+          <button class="save-drive">${item.driveUpload && item.driveUpload.fileId ? 'Re-save Drive' : 'Save to Drive'}</button>
           <button class="download primary">Download</button>
           <button class="clear danger">Delete</button>
         </span>
@@ -143,13 +146,13 @@ async function render() {
         toast('Download failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
       }
     });
-    tr.querySelector('.summarize').addEventListener('click', async (ev) => {
+    tr.querySelector('.save-drive').addEventListener('click', async (ev) => {
       const btn = ev.currentTarget;
       const original = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Summarizing…';
+      btn.textContent = 'Saving…';
       const r = await chrome.runtime.sendMessage({
-        type: 'SUMMARIZE_SESSION',
+        type: 'SAVE_TO_DRIVE',
         platform: item.platform,
         meetingId: item.meetingId,
         sessionId: item.sessionId,
@@ -159,10 +162,10 @@ async function render() {
         btn.textContent = original;
       }
       if (r && r.ok) {
-        toast('Summary generated.');
+        toast(r.updated ? 'Drive file updated.' : 'Saved to Drive.');
         render();
       } else {
-        toast('Summary failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
+        toast('Drive save failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
       }
     });
     tr.querySelector('.clear').addEventListener('click', async () => {

@@ -15,6 +15,15 @@
 import { transcribeBlob, WhisperError } from '../lib/whisper.js';
 import { listBySession, deleteChunk, deleteBySession, markFailed, markPending } from '../lib/audio-db.js';
 import { summarize, SummaryError, DEFAULT_SUMMARY_SETTINGS, ALL_SECTIONS } from '../lib/summarize.js';
+import {
+  getToken as driveGetToken,
+  revokeToken as driveRevokeToken,
+  getProfileEmail as driveGetProfileEmail,
+  listFolders as driveListFolders,
+  getFolderMeta as driveGetFolderMeta,
+  uploadMarkdown as driveUploadMarkdown,
+  DriveError,
+} from '../lib/drive.js';
 
 const PREFIX_TX = 'transcript:';
 const PREFIX_META = 'meta:';
@@ -22,6 +31,7 @@ const PREFIX_PARTIAL = 'partial:';
 const PREFIX_AUDIO_TX = 'audio_transcript:';
 const PREFIX_AUDIO_META = 'audio_meta:';
 const PREFIX_SUMMARY = 'summary:';
+const PREFIX_DRIVE_UPLOAD = 'driveUploads:';
 
 const OFFSCREEN_URL = 'src/offscreen/offscreen.html';
 
@@ -46,6 +56,11 @@ function audioKeysFor(platform, meetingId, sessionId) {
 function summaryKey(platform, meetingId, sessionId) {
   const suffix = sessionId ? `${platform || 'unknown'}:${meetingId}:${sessionId}` : `${platform || 'unknown'}:${meetingId}`;
   return PREFIX_SUMMARY + suffix;
+}
+
+function driveUploadKey(platform, meetingId, sessionId) {
+  const suffix = sessionId ? `${platform || 'unknown'}:${meetingId}:${sessionId}` : `${platform || 'unknown'}:${meetingId}`;
+  return PREFIX_DRIVE_UPLOAD + suffix;
 }
 
 function splitSuffix(rest) {
@@ -102,6 +117,21 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return handle(() => getSummary(msg));
     case 'DELETE_SUMMARY':
       return handle(() => deleteSummary(msg));
+
+    case 'CONNECT_DRIVE':
+      return handle(() => connectDrive(msg));
+    case 'DISCONNECT_DRIVE':
+      return handle(() => disconnectDrive());
+    case 'GET_DRIVE_STATE':
+      return handle(() => getDriveState(msg));
+    case 'LIST_DRIVE_FOLDERS':
+      return handle(() => listDriveFolders(msg));
+    case 'SET_DRIVE_FOLDER':
+      return handle(() => setDriveFolder(msg));
+    case 'SET_DRIVE_AUTOSAVE':
+      return handle(() => setDriveAutosave(msg));
+    case 'SAVE_TO_DRIVE':
+      return handle(() => saveToDrive(msg));
   }
 });
 
@@ -119,7 +149,8 @@ async function clearTranscript(platform, meetingId, sessionId) {
   const { tx, meta, partial } = keysFor(platform, meetingId, sessionId);
   const { tx: atx, meta: ameta } = audioKeysFor(platform, meetingId, sessionId);
   const sKey = summaryKey(platform, meetingId, sessionId);
-  await chrome.storage.local.remove([tx, meta, partial, atx, ameta, sKey]);
+  const dKey = driveUploadKey(platform, meetingId, sessionId);
+  await chrome.storage.local.remove([tx, meta, partial, atx, ameta, sKey, dKey]);
   if (sessionId) {
     try { await deleteBySession(sessionId); } catch (e) {}
   }
@@ -133,7 +164,8 @@ async function clearAll() {
            k.startsWith(PREFIX_PARTIAL) ||
            k.startsWith(PREFIX_AUDIO_TX) ||
            k.startsWith(PREFIX_AUDIO_META) ||
-           k.startsWith(PREFIX_SUMMARY)
+           k.startsWith(PREFIX_SUMMARY) ||
+           k.startsWith(PREFIX_DRIVE_UPLOAD)
   );
   if (keys.length) await chrome.storage.local.remove(keys);
   // Wipe any orphan IDB chunks too. Best-effort.
@@ -195,6 +227,12 @@ async function listMeetings() {
       touch(platform, meetingId, sessionId, {
         hasSummary: true,
         summaryGeneratedAt: rec.generatedAt || null,
+      });
+    } else if (key.startsWith(PREFIX_DRIVE_UPLOAD)) {
+      const { platform, meetingId, sessionId } = splitSuffix(key.slice(PREFIX_DRIVE_UPLOAD.length));
+      const rec = all[key] || {};
+      touch(platform, meetingId, sessionId, {
+        driveUpload: rec || null,
       });
     }
   }
@@ -421,39 +459,58 @@ function formatParticipants(participants, max = 3) {
   return cleaned.slice(0, max).join('-') + `-and-${cleaned.length - max}-more`;
 }
 
-async function finalizeAndDownload(platform, meetingId, sessionId) {
-  if (!meetingId) return { ok: false, error: 'no meetingId' };
+async function buildSessionArtifact(platform, meetingId, sessionId) {
   const { tx, meta } = keysFor(platform, meetingId, sessionId);
   const { tx: atx, meta: ameta } = audioKeysFor(platform, meetingId, sessionId);
   const sKey = summaryKey(platform, meetingId, sessionId);
   const got = await chrome.storage.local.get([tx, meta, atx, ameta, sKey]);
   const lines = got[tx] || [];
   const audioLines = got[atx] || [];
-  if (lines.length === 0 && audioLines.length === 0) return { ok: false, error: 'empty transcript' };
   const record = got[meta];
   const audioMeta = got[ameta];
   const summary = got[sKey] || null;
-
+  if (lines.length === 0 && audioLines.length === 0) {
+    return { ok: false, error: 'empty transcript' };
+  }
   const body = buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta, summary) + '\n';
-  const b64 = utf8ToBase64(body);
-  const url = `data:text/markdown;charset=utf-8;base64,${b64}`;
   const prefix = platform || 'meet';
   const start = (record && record.firstSeenAt) || (audioMeta && audioMeta.startedAt) || Date.now();
   const { date, time } = dateParts(new Date(start));
-  const sourceNames =
-    record && Array.isArray(record.participants) && record.participants.length > 0
-      ? record.participants
-      : extractParticipants(lines);
+  const rawNames = record && Array.isArray(record.participants) && record.participants.length > 0
+    ? record.participants
+    : extractParticipants(lines);
+  const sourceNames = rawNames.filter((n) => n && !ICON_LIGATURE_RE.test(n));
   const parts = formatParticipants(sourceNames);
   const filename = `${prefix}_${date}_${time}_${parts}_${meetingId}.md`;
+  return {
+    ok: true, body, filename, lineCount: lines.length, audioLineCount: audioLines.length,
+    record, audioMeta, summary,
+  };
+}
+
+async function finalizeAndDownload(platform, meetingId, sessionId) {
+  if (!meetingId) return { ok: false, error: 'no meetingId' };
+  const artifact = await buildSessionArtifact(platform, meetingId, sessionId);
+  if (!artifact.ok) return artifact;
+
+  const b64 = utf8ToBase64(artifact.body);
+  const url = `data:text/markdown;charset=utf-8;base64,${b64}`;
   try {
-    const id = await chrome.downloads.download({ url, filename, saveAs: false });
-    if (record) {
-      record.downloadedAt = Date.now();
-      await chrome.storage.local.set({ [meta]: record });
+    const id = await chrome.downloads.download({ url, filename: artifact.filename, saveAs: false });
+    if (artifact.record) {
+      const { meta } = keysFor(platform, meetingId, sessionId);
+      artifact.record.downloadedAt = Date.now();
+      await chrome.storage.local.set({ [meta]: artifact.record });
     }
     maybeAutoSummarize(platform, meetingId, sessionId);
-    return { ok: true, filename, lineCount: lines.length, audioLineCount: audioLines.length, downloadId: id };
+    maybeAutoSaveToDrive(platform, meetingId, sessionId);
+    return {
+      ok: true,
+      filename: artifact.filename,
+      lineCount: artifact.lineCount,
+      audioLineCount: artifact.audioLineCount,
+      downloadId: id,
+    };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
@@ -468,6 +525,159 @@ function maybeAutoSummarize(platform, meetingId, sessionId) {
       const got = await chrome.storage.local.get(sKey);
       if (got && got[sKey]) return; // already summarized
       await summarizeSession({ platform, meetingId, sessionId });
+    } catch (e) {}
+  })();
+}
+
+// -------------------- google drive --------------------
+
+async function getDriveSettings() {
+  const got = await chrome.storage.local.get('driveSettings');
+  return got && got.driveSettings ? got.driveSettings : { folderId: null, folderName: '', autoSave: true, connectedEmail: '' };
+}
+
+async function setDriveSettings(patch) {
+  const cur = await getDriveSettings();
+  const next = Object.assign({}, cur, patch);
+  await chrome.storage.local.set({ driveSettings: next });
+  return next;
+}
+
+async function connectDrive() {
+  try {
+    const token = await driveGetToken({ interactive: true });
+    if (!token) return { ok: false, error: 'auth canceled' };
+    const email = await driveGetProfileEmail();
+    const next = await setDriveSettings({ connectedEmail: email });
+    return { ok: true, settings: next };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'auth failed' };
+  }
+}
+
+async function disconnectDrive() {
+  try { await driveRevokeToken(); } catch (e) {}
+  await setDriveSettings({ connectedEmail: '', folderId: null, folderName: '' });
+  return { ok: true };
+}
+
+async function getDriveState() {
+  const settings = await getDriveSettings();
+  // Detect whether we still have a usable cached token without prompting.
+  let connected = false;
+  if (settings.connectedEmail) {
+    try {
+      await driveGetToken({ interactive: false });
+      connected = true;
+    } catch (e) {
+      connected = false;
+    }
+  }
+  return { ok: true, settings, connected };
+}
+
+async function listDriveFolders({ parentId, pageToken }) {
+  try {
+    const result = await driveListFolders(parentId || null, { pageToken });
+    return { ok: true, ...result };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'list failed', status: e && e.status };
+  }
+}
+
+async function setDriveFolder({ folderId }) {
+  if (!folderId) {
+    await setDriveSettings({ folderId: null, folderName: '' });
+    return { ok: true, settings: await getDriveSettings() };
+  }
+  try {
+    const meta = await driveGetFolderMeta(folderId);
+    const next = await setDriveSettings({ folderId: meta.id, folderName: meta.name });
+    return { ok: true, settings: next };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'folder check failed' };
+  }
+}
+
+async function setDriveAutosave({ enabled }) {
+  const next = await setDriveSettings({ autoSave: !!enabled });
+  return { ok: true, settings: next };
+}
+
+async function getDriveUpload(platform, meetingId, sessionId) {
+  const k = driveUploadKey(platform, meetingId, sessionId);
+  const got = await chrome.storage.local.get(k);
+  return got[k] || null;
+}
+
+async function setDriveUpload(platform, meetingId, sessionId, value) {
+  const k = driveUploadKey(platform, meetingId, sessionId);
+  await chrome.storage.local.set({ [k]: value });
+}
+
+async function saveToDrive({ platform, meetingId, sessionId }) {
+  if (!meetingId || !sessionId) return { ok: false, error: 'no session' };
+  const settings = await getDriveSettings();
+  if (!settings.folderId) {
+    return { ok: false, error: 'no Drive folder selected. open Options to pick one.' };
+  }
+  const artifact = await buildSessionArtifact(platform, meetingId, sessionId);
+  if (!artifact.ok) return artifact;
+
+  const existing = await getDriveUpload(platform, meetingId, sessionId);
+  let result;
+  let attempts = (existing && existing.attempts) || 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    attempts++;
+    try {
+      result = await driveUploadMarkdown({
+        folderId: settings.folderId,
+        filename: artifact.filename,
+        body: artifact.body,
+        fileId: existing && existing.fileId ? existing.fileId : null,
+      });
+      break;
+    } catch (e) {
+      const retryable = e instanceof DriveError && e.retryable;
+      if (retryable && attempt === 0) {
+        await sleep(750);
+        continue;
+      }
+      // Persist failure for visibility
+      await setDriveUpload(platform, meetingId, sessionId, Object.assign({}, existing || {}, {
+        platform, meetingId, sessionId,
+        lastError: (e && e.message) || 'drive upload failed',
+        lastAttemptAt: Date.now(),
+        attempts,
+      }));
+      return { ok: false, error: (e && e.message) || 'drive upload failed' };
+    }
+  }
+
+  await setDriveUpload(platform, meetingId, sessionId, {
+    platform, meetingId, sessionId,
+    fileId: result.fileId,
+    fileName: result.name,
+    webViewLink: result.webViewLink,
+    folderId: settings.folderId,
+    uploadedAt: Date.now(),
+    lastAttemptAt: Date.now(),
+    attempts,
+    byteSize: artifact.body.length,
+    lastError: null,
+  });
+  return { ok: true, fileId: result.fileId, webViewLink: result.webViewLink, updated: !!result.updated };
+}
+
+function maybeAutoSaveToDrive(platform, meetingId, sessionId) {
+  (async () => {
+    try {
+      const settings = await getDriveSettings();
+      if (!settings || !settings.autoSave || !settings.folderId) return;
+      // Verify silent token first; if not connected, do nothing.
+      try { await driveGetToken({ interactive: false }); }
+      catch (e) { return; }
+      await saveToDrive({ platform, meetingId, sessionId });
     } catch (e) {}
   })();
 }

@@ -8,6 +8,8 @@ const openOptionsBtn = document.getElementById('open-options');
 const downloadBtn = document.getElementById('download');
 const clearBtn = document.getElementById('clear');
 const summarizeBtn = document.getElementById('summarize');
+const saveDriveBtn = document.getElementById('save-drive');
+const driveStatusEl = document.getElementById('drive-status');
 const historyBtn = document.getElementById('history');
 const messageEl = document.getElementById('message');
 
@@ -16,6 +18,9 @@ let lastAudio = null;
 let lastApiKeyPresent = null;
 let lastSummary = null;
 let summarizing = false;
+let lastDrive = null;     // { settings, connected }
+let lastDriveUpload = null; // { fileId, webViewLink, uploadedAt, ... } or null
+let drivePushing = false;
 
 historyBtn.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/history/history.html') });
@@ -113,6 +118,63 @@ function setAudioButton(mode, info) {
   }
 }
 
+function renderDriveStatus() {
+  const drive = lastDrive;
+  if (!drive || !drive.connected) {
+    driveStatusEl.textContent = 'not connected (open Options)';
+    driveStatusEl.removeAttribute('title');
+    return;
+  }
+  if (!drive.settings || !drive.settings.folderId) {
+    driveStatusEl.textContent = `${drive.settings && drive.settings.connectedEmail ? drive.settings.connectedEmail + ' · ' : ''}no folder`;
+    driveStatusEl.removeAttribute('title');
+    return;
+  }
+  const upload = lastDriveUpload;
+  if (drivePushing) {
+    driveStatusEl.textContent = `${drive.settings.folderName} · uploading…`;
+    return;
+  }
+  if (upload && upload.fileId) {
+    const when = upload.uploadedAt ? new Date(upload.uploadedAt).toLocaleTimeString() : '';
+    driveStatusEl.textContent = `${drive.settings.folderName} · saved ${when}`;
+    if (upload.webViewLink) driveStatusEl.title = upload.webViewLink;
+  } else {
+    driveStatusEl.textContent = `${drive.settings.folderName} · pending`;
+    driveStatusEl.removeAttribute('title');
+  }
+}
+
+function setSaveDriveButton() {
+  if (drivePushing) {
+    saveDriveBtn.textContent = 'Saving to Drive…';
+    saveDriveBtn.disabled = true;
+    saveDriveBtn.removeAttribute('title');
+    return;
+  }
+  if (!lastDrive || !lastDrive.connected) {
+    saveDriveBtn.textContent = 'Connect Drive';
+    saveDriveBtn.disabled = false;
+    saveDriveBtn.title = 'Opens Options to authorize and pick a folder';
+    return;
+  }
+  if (!lastDrive.settings.folderId) {
+    saveDriveBtn.textContent = 'Pick Drive folder';
+    saveDriveBtn.disabled = false;
+    saveDriveBtn.title = 'Opens Options to choose a folder';
+    return;
+  }
+  if (lastDriveUpload && lastDriveUpload.fileId) {
+    saveDriveBtn.textContent = 'Re-save to Drive';
+    saveDriveBtn.disabled = false;
+    saveDriveBtn.title = lastDriveUpload.webViewLink || '';
+    return;
+  }
+  saveDriveBtn.textContent = 'Save to Drive';
+  saveDriveBtn.disabled = false;
+  saveDriveBtn.removeAttribute('title');
+}
+
 function renderAudioStatus(audio, hasKey) {
   if (!hasKey) {
     audioStatusEl.textContent = 'no key — click Options';
@@ -144,6 +206,24 @@ async function getApiKeyPresent() {
   }
 }
 
+async function refreshDriveContext({ platform, meetingId, sessionId }) {
+  try {
+    lastDrive = await chrome.runtime.sendMessage({ type: 'GET_DRIVE_STATE' });
+  } catch (e) {
+    lastDrive = null;
+  }
+  lastDriveUpload = null;
+  if (platform && meetingId && sessionId) {
+    try {
+      const got = await chrome.storage.local.get(`driveUploads:${platform}:${meetingId}:${sessionId}`);
+      const k = `driveUploads:${platform}:${meetingId}:${sessionId}`;
+      lastDriveUpload = got[k] || null;
+    } catch (e) {}
+  }
+  renderDriveStatus();
+  setSaveDriveButton();
+}
+
 async function refresh() {
   const tab = await getActiveSupportedTab();
   const hasKey = await getApiKeyPresent();
@@ -161,6 +241,7 @@ async function refresh() {
     lastAudio = null;
     lastSummary = null;
     updateSummarizeButton(0, hasKey);
+    await refreshDriveContext({});
     return;
   }
   const state = await queryContent(tab.id, 'GET_STATE');
@@ -217,6 +298,11 @@ async function refresh() {
     }
     const audioCount = (audio && audio.meta && audio.meta.chunkCount) || 0;
     updateSummarizeButton(audioCount, hasKey);
+    await refreshDriveContext({
+      platform: (audio && audio.meta && audio.meta.platform) || urlPlatform,
+      meetingId: (audio && audio.meta && audio.meta.meetingId) || urlMeetingId,
+      sessionId: audio && audio.sessionId,
+    });
     return;
   }
   lastState = state;
@@ -250,6 +336,11 @@ async function refresh() {
     });
     lastSummary = (summaryRes && summaryRes.summary) || null;
     updateSummarizeButton(captionCount, hasKey);
+    await refreshDriveContext({
+      platform: state.platform,
+      meetingId: state.meetingId,
+      sessionId: state.sessionId || (lastAudio && lastAudio.sessionId),
+    });
 
     // Ask by (platform, meetingId) so the SW can find the active audio
     // session even when captions haven't minted one yet.
@@ -279,6 +370,7 @@ async function refresh() {
     else setAudioButton('disabled', 'Join the meeting first');
     lastSummary = null;
     updateSummarizeButton(0, hasKey);
+    await refreshDriveContext({});
   }
 }
 
@@ -442,6 +534,45 @@ downloadBtn.addEventListener('click', async () => {
     setMsg(`Downloaded ${r.filename} (${r.lineCount} lines).`, 'ok');
   } else {
     setMsg('Download failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
+  }
+  refresh();
+});
+
+saveDriveBtn.addEventListener('click', async () => {
+  setMsg('');
+  // If not connected or no folder, route to Options.
+  if (!lastDrive || !lastDrive.connected || !lastDrive.settings || !lastDrive.settings.folderId) {
+    if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+    else chrome.tabs.create({ url: chrome.runtime.getURL('src/options/options.html') });
+    return;
+  }
+  const tab = await getActiveSupportedTab();
+  if (!tab) {
+    setMsg('Open a Meet or Teams tab first.', 'error');
+    return;
+  }
+  const state = await queryContent(tab.id, 'GET_STATE');
+  let platform = state && state.platform;
+  let meetingId = state && state.meetingId;
+  let sessionId = state && state.sessionId;
+  if (!sessionId && lastAudio && lastAudio.sessionId) {
+    sessionId = lastAudio.sessionId;
+    if (!meetingId && lastAudio.meta) meetingId = lastAudio.meta.meetingId;
+    if (!platform && lastAudio.meta) platform = lastAudio.meta.platform;
+  }
+  if (!meetingId || !sessionId) {
+    setMsg('No session to save yet. Capture some captions or audio first.', 'error');
+    return;
+  }
+  drivePushing = true;
+  setSaveDriveButton();
+  renderDriveStatus();
+  const r = await chrome.runtime.sendMessage({ type: 'SAVE_TO_DRIVE', platform, meetingId, sessionId });
+  drivePushing = false;
+  if (r && r.ok) {
+    setMsg(r.updated ? 'Drive file updated.' : 'Saved to Drive.', 'ok');
+  } else {
+    setMsg('Drive save failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
   }
   refresh();
 });

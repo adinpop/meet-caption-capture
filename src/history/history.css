@@ -155,6 +155,7 @@ table.list {
 .source-captions { background: #eef2ff; color: #3730a3; }
 .source-audio { background: #fef3c7; color: #92400e; }
 .source-summary { background: #dcfce7; color: #166534; }
+.source-drive { background: #e0f2fe; color: #075985; }
 .source-pending { background: #fee2e2; color: #991b1b; }
 
 .participants {
