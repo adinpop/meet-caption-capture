@@ -547,8 +547,9 @@ async function connectDrive() {
   try {
     const token = await driveGetToken({ interactive: true });
     if (!token) return { ok: false, error: 'auth canceled' };
-    const email = await driveGetProfileEmail();
-    const next = await setDriveSettings({ connectedEmail: email });
+    let email = '';
+    try { email = await driveGetProfileEmail(); } catch (e) {}
+    const next = await setDriveSettings({ connectedEmail: email || '(connected)' });
     return { ok: true, settings: next };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'auth failed' };
@@ -563,15 +564,25 @@ async function disconnectDrive() {
 
 async function getDriveState() {
   const settings = await getDriveSettings();
-  // Detect whether we still have a usable cached token without prompting.
+  // Connected = we can get a token without prompting. Don't gate on
+  // connectedEmail, which is sometimes empty on Chrome profiles where
+  // getProfileUserInfo returns no email.
   let connected = false;
-  if (settings.connectedEmail) {
+  try {
+    const token = await driveGetToken({ interactive: false });
+    if (token) connected = true;
+  } catch (e) {
+    connected = false;
+  }
+  // If we're connected but have no email recorded, opportunistically refresh.
+  if (connected && !settings.connectedEmail) {
     try {
-      await driveGetToken({ interactive: false });
-      connected = true;
-    } catch (e) {
-      connected = false;
-    }
+      const email = await driveGetProfileEmail();
+      if (email) {
+        await setDriveSettings({ connectedEmail: email });
+        settings.connectedEmail = email;
+      }
+    } catch (e) {}
   }
   return { ok: true, settings, connected };
 }

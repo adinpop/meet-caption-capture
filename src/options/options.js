@@ -199,11 +199,14 @@ connectDriveBtn.addEventListener('click', async () => {
   setDriveStatus('Authorizing with Google...', 'info');
   const r = await chrome.runtime.sendMessage({ type: 'CONNECT_DRIVE' });
   if (r && r.ok) {
-    setDriveStatus('Connected. Pick a folder to start auto-saving.', 'ok');
+    setDriveStatus('Connected. Pick a folder to save transcripts to.', 'ok');
+    await renderDriveSettings();
+    // Auto-open the picker so the user has one continuous flow.
+    if (!(r.settings && r.settings.folderId)) openPicker();
   } else {
     setDriveStatus('Could not connect: ' + (r && r.error ? r.error : 'unknown'), 'error');
+    await renderDriveSettings();
   }
-  await renderDriveSettings();
 });
 
 disconnectDriveBtn.addEventListener('click', async () => {
@@ -281,11 +284,14 @@ async function loadCurrent() {
   }
 }
 
-pickFolderBtn.addEventListener('click', () => {
+function openPicker() {
   pickerStack = [];
   pickerEl.hidden = false;
   loadCurrent();
-});
+  try { pickerEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+}
+
+pickFolderBtn.addEventListener('click', openPicker);
 
 pickerCancelBtn.addEventListener('click', () => {
   pickerEl.hidden = true;
