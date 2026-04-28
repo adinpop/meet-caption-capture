@@ -7,7 +7,6 @@ const toggleAudioBtn = document.getElementById('toggle-audio');
 const openOptionsBtn = document.getElementById('open-options');
 const downloadBtn = document.getElementById('download');
 const clearBtn = document.getElementById('clear');
-const summarizeBtn = document.getElementById('summarize');
 const saveDriveBtn = document.getElementById('save-drive');
 const driveStatusEl = document.getElementById('drive-status');
 const historyBtn = document.getElementById('history');
@@ -16,8 +15,6 @@ const messageEl = document.getElementById('message');
 let lastState = null;
 let lastAudio = null;
 let lastApiKeyPresent = null;
-let lastSummary = null;
-let summarizing = false;
 let lastDrive = null;     // { settings, connected }
 let lastDriveUpload = null; // { fileId, webViewLink, uploadedAt, ... } or null
 let drivePushing = false;
@@ -238,8 +235,6 @@ async function refresh() {
     else setAudioButton('disabled', 'Open a Meet or Teams tab first');
     lastState = null;
     lastAudio = null;
-    lastSummary = null;
-    updateSummarizeButton(0, hasKey);
     await refreshDriveContext({});
     return;
   }
@@ -283,20 +278,6 @@ async function refresh() {
     setMsg('Turn on captions in the meeting, or click Record audio to capture with Whisper only.', 'info');
     lastState = null;
 
-    // Summarize can still apply to an audio-only session
-    if (audio && audio.sessionId) {
-      const summaryRes = await chrome.runtime.sendMessage({
-        type: 'GET_SUMMARY',
-        platform: (audio.meta && audio.meta.platform) || urlPlatform,
-        meetingId: (audio.meta && audio.meta.meetingId) || urlMeetingId,
-        sessionId: audio.sessionId,
-      });
-      lastSummary = (summaryRes && summaryRes.summary) || null;
-    } else {
-      lastSummary = null;
-    }
-    const audioCount = (audio && audio.meta && audio.meta.chunkCount) || 0;
-    updateSummarizeButton(audioCount, hasKey);
     await refreshDriveContext({
       platform: (audio && audio.meta && audio.meta.platform) || urlPlatform,
       meetingId: (audio && audio.meta && audio.meta.meetingId) || urlMeetingId,
@@ -327,14 +308,6 @@ async function refresh() {
     const captionCount = res && res.lines ? res.lines.length : 0;
     lineCountEl.textContent = String(captionCount);
 
-    const summaryRes = await chrome.runtime.sendMessage({
-      type: 'GET_SUMMARY',
-      platform: state.platform,
-      meetingId: state.meetingId,
-      sessionId: state.sessionId,
-    });
-    lastSummary = (summaryRes && summaryRes.summary) || null;
-    updateSummarizeButton(captionCount, hasKey);
     await refreshDriveContext({
       platform: state.platform,
       meetingId: state.meetingId,
@@ -367,46 +340,10 @@ async function refresh() {
     setToggleButton('disabled');
     if (!hasKey) setAudioButton('needs-key');
     else setAudioButton('disabled', 'Join the meeting first');
-    lastSummary = null;
-    updateSummarizeButton(0, hasKey);
     await refreshDriveContext({});
   }
 }
 
-function updateSummarizeButton(captionCount, hasKey) {
-  const audioMeta = lastAudio && lastAudio.meta;
-  const audioCount = audioMeta ? audioMeta.chunkCount || 0 : 0;
-  const anyTranscript = (captionCount > 0) || (audioCount > 0) || (lastAudio && lastAudio.pending > 0);
-
-  if (summarizing) {
-    summarizeBtn.textContent = 'Summarizing…';
-    summarizeBtn.disabled = true;
-    summarizeBtn.title = '';
-    return;
-  }
-  if (!hasKey) {
-    summarizeBtn.textContent = 'Summarize';
-    summarizeBtn.disabled = true;
-    summarizeBtn.title = 'Save an OpenAI key in Options first';
-    return;
-  }
-  if (!anyTranscript) {
-    summarizeBtn.textContent = 'Summarize';
-    summarizeBtn.disabled = true;
-    summarizeBtn.title = 'No transcript yet';
-    return;
-  }
-  if (lastSummary) {
-    const when = lastSummary.generatedAt ? new Date(lastSummary.generatedAt).toLocaleTimeString() : '';
-    summarizeBtn.textContent = 'Re-summarize';
-    summarizeBtn.disabled = false;
-    summarizeBtn.title = when ? `Last summary: ${when}` : '';
-    return;
-  }
-  summarizeBtn.textContent = 'Summarize';
-  summarizeBtn.disabled = false;
-  summarizeBtn.title = '';
-}
 
 toggleAudioBtn.addEventListener('click', async () => {
   setMsg('');
@@ -567,48 +504,6 @@ saveDriveBtn.addEventListener('click', async () => {
     setMsg(r.updated ? 'Drive file updated.' : 'Saved to Drive.', 'ok');
   } else {
     setMsg('Drive save failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
-  }
-  refresh();
-});
-
-summarizeBtn.addEventListener('click', async () => {
-  if (summarizing) return;
-  setMsg('');
-  const tab = await getActiveSupportedTab();
-  if (!tab) {
-    setMsg('Open a Meet or Teams tab first.', 'error');
-    return;
-  }
-  const state = await queryContent(tab.id, 'GET_STATE');
-  let platform = state && state.platform;
-  let meetingId = state && state.meetingId;
-  let sessionId = state && state.sessionId;
-  if (!meetingId) {
-    // Fall back to audio session if captions never fired
-    if (lastAudio && lastAudio.sessionId) {
-      sessionId = lastAudio.sessionId;
-      meetingId = (lastAudio.meta && lastAudio.meta.meetingId) || meetingId;
-      platform = (lastAudio.meta && lastAudio.meta.platform) || platform;
-    }
-  }
-  if (!meetingId || !sessionId) {
-    setMsg('No session to summarize yet. Capture some captions or audio first.', 'error');
-    return;
-  }
-  summarizing = true;
-  updateSummarizeButton(parseInt(lineCountEl.textContent, 10) || 0, lastApiKeyPresent);
-  const r = await chrome.runtime.sendMessage({
-    type: 'SUMMARIZE_SESSION',
-    platform,
-    meetingId,
-    sessionId,
-  });
-  summarizing = false;
-  if (r && r.ok) {
-    lastSummary = r.summary;
-    setMsg('Summary generated. Open Download now to export the updated .md.', 'ok');
-  } else {
-    setMsg('Summary failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
   }
   refresh();
 });

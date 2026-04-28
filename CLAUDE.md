@@ -5,7 +5,7 @@ Chrome MV3 extension that captures live captions from Google Meet and Microsoft 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.8.0. SW is ES module. Has stable "key" so the extension ID is fixed.
+manifest.json                         MV3 manifest, v0.8.3. SW is ES module. Has stable "key" so the extension ID is fixed.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
   content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
@@ -16,7 +16,6 @@ src/
   offscreen/offscreen.html|js         Owns MediaStream + MediaRecorder for audio capture; writes chunks to IndexedDB
   lib/audio-db.js                     IndexedDB wrapper for raw audio chunk blobs (captionCapture DB, audioChunks store)
   lib/whisper.js                      Thin wrapper around api.openai.com/v1/audio/transcriptions; only caller of the API key
-  lib/summarize.js                    Thin wrapper around api.openai.com/v1/chat/completions for meeting summaries; JSON-mode output (Summarize UI is hidden in 0.8.x; code intact)
   lib/drive.js                        Google Drive REST wrapper; token via chrome.identity, listFolders + uploadMarkdown
 icons/
   icon.svg                            Master logomark (excluded from zip)
@@ -46,7 +45,6 @@ icons/
   - Retry: one immediate retry on 5xx / 429, fail otherwise. Failed chunks stay in IndexedDB with `status: 'failed'` and can be retried via `RETRY_FAILED_CHUNKS`.
   - Download: `finalizeAndDownload` now emits `## Captions transcript` and/or `## Audio transcript (Whisper)` sections in the same `.md`, driven by whichever storage keys exist for the session.
 - **API key handling**: stored only in `chrome.storage.local` (never `sync`). Only the service worker reads it. Offscreen doc and popup never see it. `host_permissions` is narrowed to `https://api.openai.com/*` so no other exfil endpoint is reachable.
-- **Summarization (opt-in, currently hidden)**: implementation is intact in `src/lib/summarize.js`, the SW (`SUMMARIZE_SESSION` handler), and Options. UI surfaces (Summarize button in popup + history, Summary card in Options) are hidden in 0.8.0 per request. Re-enable by removing the `hidden` attribute from those sections. When active, the parsed JSON (keys: `summary`, `topics`, `decisions`, `actions`, `blind_spots`, `opportunities`) is stored at `summary:<platform>:<meetingId>:<sessionId>` and merged into the downloaded `.md` as sections above the transcripts. Original transcripts are never modified.
 - **Google Drive auto-save (opt-in, the focus of 0.8.x)**: when connected and a folder is picked, every finalized transcript is uploaded as Markdown to that folder.
   - **Auth**: `chrome.identity.getAuthToken` against the manifest `oauth2.client_id`. The extension's stable ID is enforced by the manifest `key` field, so the OAuth client (Item ID = `ooafpmnoohndcngljgjnkinfkhkbmglo`) keeps matching across reloads.
   - **Scopes**: `drive.file` (only files this extension creates) + `drive.metadata.readonly` (so the folder picker can list folder names; no file content is read).
@@ -83,9 +81,12 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.6.0**: opt-in audio capture of the active meeting tab + Whisper transcription. Offscreen document owns the MediaStream, MediaRecorder slices at 30 s into IndexedDB, service worker ships chunks to `api.openai.com/v1/audio/transcriptions`. Combined Markdown export with `## Captions transcript` and `## Audio transcript (Whisper)` sections. Options page for API key. Service worker now an ES module.
 - **0.6.1**: Record audio UX fixes. Button no longer stays disabled when captions haven't fired a session yet (falls back to minting a session on BEGIN_AUDIO and infers meetingId from the tab URL). When no API key is saved, the button flips to "Set API key to record" and opens Options on click instead of silently disabling. Recycles the offscreen doc (stop + close + brief delay) before each capture start so a leftover stream cannot cause `Cannot capture a tab with an active stream`.
 - **0.6.2**: audio chunks are now standalone WebM files. Earlier versions used `MediaRecorder.start(30000)` which emits header-less segments after the first chunk, so every chunk past the first failed Whisper decode. The offscreen doc now restarts the MediaRecorder per 30 s window, producing a complete standalone file each time. Popup also shows Whisper's last error on hover of the Audio status line.
-- **0.7.0**: opt-in meeting summaries. **Summarize** button in the popup and per history row calls chat/completions, stores structured `{summary, topics, decisions, actions, blind_spots, opportunities}` at `summary:...`, and merges matching sections into the `.md` at download time. Transcripts are never modified. Options page gains section pickers, model dropdown, editable prompt, and auto-summarize toggle. History shows a `[SUMMARY]` badge when present.
+- **0.7.0**: opt-in meeting summaries (removed in 0.8.3, see below).
 - **0.7.1**: filter Material Icons ligatures so glyph identifiers like `arrow_downward` stop getting captured as participants or speakers. The captions DOM walker skips text nodes inside `material-icons` / `google-symbols` elements and rejects snake_case ligature names. `extractParticipants` and `buildMarkdown` also filter at render time, so historic sessions with garbage already saved render cleanly on download.
-- **0.8.0** (current): Google Drive auto-save. Per-session `.md` is uploaded to a Drive folder you pick via a custom in-Options folder picker. Re-uploads update the same file in place; Drive's built-in revision history keeps prior versions. New manifest fields: `key` (stable extension ID), `oauth2` (client_id + drive scopes), `identity` permission, `googleapis.com` / `oauth2.googleapis.com` host permissions. Summarize UI is hidden for now (code intact at `src/lib/summarize.js` and the SW); flip the `hidden` attribute back to re-enable. OAuth client lives in your own Google Cloud project; client_id is in the manifest.
+- **0.8.0**: Google Drive auto-save. Per-session `.md` is uploaded to a Drive folder you pick via a custom in-Options folder picker. Re-uploads update the same file in place; Drive's built-in revision history keeps prior versions. New manifest fields: `key` (stable extension ID), `oauth2` (client_id + drive scopes), `identity` permission, `googleapis.com` / `oauth2.googleapis.com` host permissions. OAuth client lives in your own Google Cloud project; client_id is in the manifest.
+- **0.8.1**: auto-open the folder picker right after Connect Drive succeeds, and detect connection state via the silent token check rather than the `connectedEmail` field (which is empty on some Chrome profiles).
+- **0.8.2**: keep the popup's audio button focused on capture. Removed the dual-purpose "Set API key to record" affordance from the audio toggle.
+- **0.8.3** (current): summarization feature removed. Deleted `src/lib/summarize.js`, `SUMMARIZE_SESSION` / `GET_SUMMARY` / `DELETE_SUMMARY` handlers, the `summary:*` storage key, and all summary UI. The Markdown export no longer renders Summary / Topics / Decisions / Action items / Blind spots / Opportunities sections. `summary:*` and `summarySettings` keys from previous installs are orphaned but harmless; Clear all wipes them along with the rest.
 
 ## Build and install
 

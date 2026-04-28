@@ -99,60 +99,6 @@
         <div id="drive-status" class="status"></div>
       </section>
 
-      <section class="card" hidden>
-        <h2>Summary sections</h2>
-        <p class="hint">
-          After a meeting, click <strong>Summarize</strong> in the popup to have the transcript
-          analyzed by <code>gpt-4o-mini</code> (or a model you pick below) and merged into the
-          same Markdown file. Sent to <code>api.openai.com/v1/chat/completions</code> with your
-          key.
-        </p>
-
-        <div class="row" style="flex-direction: column; align-items: stretch;">
-          <label>Include these sections</label>
-          <div id="sections" class="checkbox-grid">
-            <label><input type="checkbox" value="summary" /> Summary (3 to 5 sentences)</label>
-            <label><input type="checkbox" value="topics" /> Topics discussed</label>
-            <label><input type="checkbox" value="decisions" /> Decisions</label>
-            <label><input type="checkbox" value="actions" /> Action items (with owner and due date)</label>
-            <label><input type="checkbox" value="blind_spots" /> Blind spots</label>
-            <label><input type="checkbox" value="opportunities" /> Opportunities</label>
-          </div>
-        </div>
-
-        <div class="row" style="flex-direction: column; align-items: stretch;">
-          <label for="summary-model">Model</label>
-          <select id="summary-model">
-            <option value="gpt-4o-mini">gpt-4o-mini (cheap, fast, recommended)</option>
-            <option value="gpt-4o">gpt-4o (higher quality, ~10x cost)</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-          </select>
-        </div>
-
-        <div class="row" style="flex-direction: column; align-items: stretch;">
-          <label for="summary-prompt">Prompt template</label>
-          <textarea id="summary-prompt" rows="10" spellcheck="false"></textarea>
-          <div class="row" style="justify-content: flex-end; margin-top: 6px;">
-            <button id="reset-prompt">Reset to default</button>
-          </div>
-          <p class="hint" style="margin-top: 6px;">
-            <code>{{transcript}}</code> is replaced with the joined captions + Whisper text at
-            call time. The model is told to return a JSON object with keys matching the
-            sections above.
-          </p>
-        </div>
-
-        <div class="row">
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
-            <input id="summary-auto" type="checkbox" />
-            Auto-summarize when Stop capture fires
-          </label>
-          <button id="save-summary" class="primary" style="margin-left: auto;">Save settings</button>
-        </div>
-
-        <div id="summary-status" class="status"></div>
-      </section>
-
       <section class="card muted">
         <h2>How it works</h2>
         <ul>
@@ -160,7 +106,6 @@
           <li>Audio is chunked into 30 second segments and uploaded to <code>api.openai.com/v1/audio/transcriptions</code> as they become available.</li>
           <li>Raw audio is held in IndexedDB while in flight and deleted after successful transcription.</li>
           <li>Transcripts are merged into the downloadable Markdown file under a separate <code>## Audio transcript</code> section.</li>
-          <li>Summaries (optional) prepend <code>## Summary</code>, <code>## Topics discussed</code>, <code>## Decisions</code>, <code>## Action items</code>, <code>## Blind spots</code>, <code>## Opportunities</code> sections above the transcripts. Original transcripts are never modified.</li>
         </ul>
       </section>
     </main>
