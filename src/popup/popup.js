@@ -105,11 +105,10 @@ function setAudioButton(mode, info) {
     toggleAudioBtn.disabled = false;
     toggleAudioBtn.removeAttribute('title');
   } else if (mode === 'needs-key') {
-    // Clickable even without a key: opens Options so the user is never stuck.
-    toggleAudioBtn.textContent = 'Set API key to record';
+    toggleAudioBtn.textContent = 'Record audio';
     toggleAudioBtn.className = 'primary';
-    toggleAudioBtn.disabled = false;
-    toggleAudioBtn.title = info || 'Opens Options to paste your OpenAI API key';
+    toggleAudioBtn.disabled = true;
+    toggleAudioBtn.title = info || 'Set your OpenAI API key in Options first';
   } else {
     toggleAudioBtn.textContent = 'Record audio';
     toggleAudioBtn.className = 'primary';
@@ -411,11 +410,6 @@ function updateSummarizeButton(captionCount, hasKey) {
 
 toggleAudioBtn.addEventListener('click', async () => {
   setMsg('');
-  if (audioButtonMode === 'needs-key') {
-    if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
-    else chrome.tabs.create({ url: chrome.runtime.getURL('src/options/options.html') });
-    return;
-  }
   const tab = await getActiveSupportedTab();
   if (!tab) {
     setMsg('Open a Meet or Teams tab first.', 'error');
