@@ -759,7 +759,7 @@ async function drain(platform, meetingId, sessionId) {
 }
 
 async function processPendingChunks(platform, meetingId, sessionId) {
-  const { apiKey } = await chrome.storage.local.get('apiKey');
+  const { apiKey, whisperLanguage } = await chrome.storage.local.get(['apiKey', 'whisperLanguage']);
   const rows = await listBySession(sessionId);
   const pending = rows.filter((r) => r.status === 'pending').sort((a, b) => a.chunkIndex - b.chunkIndex);
   if (pending.length === 0) return;
@@ -782,7 +782,7 @@ async function processPendingChunks(platform, meetingId, sessionId) {
     let failedErr = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        result = await transcribeBlob(apiKey, row.blob, { prompt });
+        result = await transcribeBlob(apiKey, row.blob, { prompt, language: whisperLanguage || undefined });
         break;
       } catch (e) {
         failedErr = e;

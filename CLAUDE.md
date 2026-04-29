@@ -5,7 +5,7 @@ Chrome MV3 extension that captures live captions from Google Meet and Microsoft 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.8.3. SW is ES module. Has stable "key" so the extension ID is fixed.
+manifest.json                         MV3 manifest, v0.8.4. SW is ES module. Has stable "key" so the extension ID is fixed.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
   content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
@@ -86,7 +86,8 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.8.0**: Google Drive auto-save. Per-session `.md` is uploaded to a Drive folder you pick via a custom in-Options folder picker. Re-uploads update the same file in place; Drive's built-in revision history keeps prior versions. New manifest fields: `key` (stable extension ID), `oauth2` (client_id + drive scopes), `identity` permission, `googleapis.com` / `oauth2.googleapis.com` host permissions. OAuth client lives in your own Google Cloud project; client_id is in the manifest.
 - **0.8.1**: auto-open the folder picker right after Connect Drive succeeds, and detect connection state via the silent token check rather than the `connectedEmail` field (which is empty on some Chrome profiles).
 - **0.8.2**: keep the popup's audio button focused on capture. Removed the dual-purpose "Set API key to record" affordance from the audio toggle.
-- **0.8.3** (current): summarization feature removed. Deleted `src/lib/summarize.js`, `SUMMARIZE_SESSION` / `GET_SUMMARY` / `DELETE_SUMMARY` handlers, the `summary:*` storage key, and all summary UI. The Markdown export no longer renders Summary / Topics / Decisions / Action items / Blind spots / Opportunities sections. `summary:*` and `summarySettings` keys from previous installs are orphaned but harmless; Clear all wipes them along with the rest.
+- **0.8.3**: summarization feature removed. Deleted `src/lib/summarize.js`, `SUMMARIZE_SESSION` / `GET_SUMMARY` / `DELETE_SUMMARY` handlers, the `summary:*` storage key, and all summary UI. The Markdown export no longer renders Summary / Topics / Decisions / Action items / Blind spots / Opportunities sections. `summary:*` and `summarySettings` keys from previous installs are orphaned but harmless; Clear all wipes them along with the rest.
+- **0.8.4** (current): Whisper language hint dropdown in Options. Picks from Auto-detect (default, no hint), Bosnian / Croatian / Serbian (sends `hr`), English, or one of a dozen common other languages. Stored at `chrome.storage.local.whisperLanguage`. The service worker reads it once per drain and passes it to `transcribeBlob` as the `language` form field.
 
 ## Build and install
 

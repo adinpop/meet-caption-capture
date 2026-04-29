@@ -99,6 +99,45 @@
         <div id="drive-status" class="status"></div>
       </section>
 
+      <section class="card">
+        <h2>Whisper language</h2>
+        <p class="hint">
+          Hint Whisper which language the audio is in. Better accuracy than auto-detect
+          when you know the language; worse than auto-detect when the meeting language
+          differs from the hint. Whisper accepts only one language per chunk; the
+          Bosnian / Croatian / Serbian option uses Whisper's <code>hr</code> code,
+          which it groups with all three internally.
+        </p>
+
+        <div class="row" style="flex-direction: column; align-items: stretch;">
+          <label for="whisper-language">Language</label>
+          <select id="whisper-language">
+            <option value="">Auto-detect (default)</option>
+            <option value="hr">Bosnian / Croatian / Serbian</option>
+            <option value="en">English</option>
+            <option value="" disabled>──────────</option>
+            <option value="de">German</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="tr">Turkish</option>
+            <option value="ar">Arabic</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+          </select>
+        </div>
+
+        <div class="row" style="margin-top: 8px; justify-content: flex-end;">
+          <button id="save-language" class="primary">Save</button>
+        </div>
+
+        <div id="language-status" class="status"></div>
+      </section>
+
       <section class="card muted">
         <h2>How it works</h2>
         <ul>

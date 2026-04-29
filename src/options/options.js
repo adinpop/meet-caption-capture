@@ -248,3 +248,36 @@ pickerSelectBtn.addEventListener('click', async () => {
 });
 
 renderDriveSettings();
+
+// -------------------- whisper language --------------------
+
+const langSel = document.getElementById('whisper-language');
+const saveLangBtn = document.getElementById('save-language');
+const langStatusEl = document.getElementById('language-status');
+
+function setLangStatus(text, kind) {
+  langStatusEl.textContent = text || '';
+  langStatusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function renderLanguage() {
+  const got = await chrome.storage.local.get('whisperLanguage');
+  const value = (got && got.whisperLanguage) || '';
+  // If the stored value isn't one of our options, add it on the fly so the
+  // user sees what was saved.
+  if (value && ![...langSel.options].some((o) => o.value === value && !o.disabled)) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value + ' (custom)';
+    langSel.appendChild(opt);
+  }
+  langSel.value = value;
+}
+
+saveLangBtn.addEventListener('click', async () => {
+  const value = langSel.value || '';
+  await chrome.storage.local.set({ whisperLanguage: value });
+  setLangStatus(value ? `Saved. Future chunks will be hinted as "${value}".` : 'Saved. Auto-detect.', 'ok');
+});
+
+renderLanguage();
