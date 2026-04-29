@@ -1,14 +1,25 @@
 {
   "manifest_version": 3,
   "name": "RUBICON Meet Caption Capture",
-  "version": "0.5.0",
-  "description": "Captures Google Meet and Microsoft Teams live captions to a Markdown (.md) file per meeting, with date, time, participants, and title.",
-  "permissions": ["storage", "downloads"],
+  "version": "0.8.4",
+  "description": "Captures Google Meet and Microsoft Teams live captions to a Markdown (.md) file per meeting. Optional audio recording transcribed via OpenAI Whisper. Auto-save the resulting transcripts to a Google Drive folder you choose.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk/legUF/xjwD/qv5ZizZyoYH09D6wNueZvKl6TYM3ntCIbiuJ06/KCzyLZJX1A8QpWB9SB8Rctu0poFTikZoAOO2OkBWkxlymkfZR/1nt1HRCKTazVLZRoIdEuR1VVM5tNVkuLQrmzOl9doRG+T/cQIAPoNrqJ8gni7/k25drmv9ei7b0RSgsjS1ICXKtT1H9l4gM0ycBPkZ0YTJ4GmWf2zAh+j1kd2R/uUqptwipXlUmf6KfwQTRGHLMMDTHVsnbxHMSAJaxoqFYrd3jYtyp0HSHjK8ae4a8lNWs6yJt7aCJ28Pa112Eu8MKeNjT76YHrGew6U3CaNQQt0SwLG/JQIDAQAB",
+  "oauth2": {
+    "client_id": "564751840053-svqop3hten0s5e4v3kunpirpd475sjno.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/drive.metadata.readonly"
+    ]
+  },
+  "permissions": ["storage", "downloads", "offscreen", "tabCapture", "activeTab", "identity"],
   "host_permissions": [
     "https://meet.google.com/*",
     "https://teams.microsoft.com/*",
     "https://teams.cloud.microsoft/*",
-    "https://teams.live.com/*"
+    "https://teams.live.com/*",
+    "https://api.openai.com/*",
+    "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*"
   ],
   "action": {
     "default_popup": "src/popup/popup.html",
@@ -25,8 +36,10 @@
     "128": "icons/icon128.png"
   },
   "background": {
-    "service_worker": "src/background/service-worker.js"
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
   },
+  "options_page": "src/options/options.html",
   "content_scripts": [
     {
       "matches": [

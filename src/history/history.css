@@ -142,6 +142,22 @@ table.list {
 .platform-teams { background: #e8f0fe; color: #1a73e8; }
 .platform-unknown { background: #eee; color: #5f6368; }
 
+.source-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.source-captions { background: #eef2ff; color: #3730a3; }
+.source-audio { background: #fef3c7; color: #92400e; }
+.source-summary { background: #dcfce7; color: #166534; }
+.source-drive { background: #e0f2fe; color: #075985; }
+.source-pending { background: #fee2e2; color: #991b1b; }
+
 .participants {
   max-width: 260px;
   color: var(--midnight);

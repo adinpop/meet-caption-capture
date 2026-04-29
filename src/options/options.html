@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RUBICON Meet Caption Capture — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>RUBICON Meet Caption Capture</h1>
+      <p class="subtitle">Audio transcription settings</p>
+
+      <section class="card">
+        <h2>OpenAI API key</h2>
+        <p class="hint">
+          Used for Whisper audio transcription. Stored only on this device via
+          <code>chrome.storage.local</code>. Never synced to your Google account, never
+          sent anywhere other than <code>api.openai.com</code>. The key lives in
+          plaintext in your Chrome profile directory, so your OS user account is the
+          trust boundary.
+        </p>
+        <p class="hint">
+          Recommended: create a restricted key scoped to the Audio API only, with a
+          hard usage limit on your OpenAI account.
+        </p>
+
+        <div id="has-key" class="row" hidden>
+          <div>
+            <label>Current key</label>
+            <div id="key-display" class="masked">—</div>
+          </div>
+          <button id="remove" class="danger">Remove key</button>
+        </div>
+
+        <div id="no-key" class="row" hidden>
+          <div class="grow">
+            <label for="key-input">Paste your OpenAI API key</label>
+            <input id="key-input" type="password" autocomplete="off" placeholder="sk-..." />
+          </div>
+          <button id="save" class="primary">Validate &amp; save</button>
+        </div>
+
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="card">
+        <h2>Google Drive auto-save</h2>
+        <p class="hint">
+          When connected, every finalized transcript is uploaded as Markdown to a folder
+          you choose. Re-uploads update the same file in place; Drive keeps revision
+          history automatically. Scopes used:
+          <code>drive.file</code> (only files this extension creates) and
+          <code>drive.metadata.readonly</code> (so the folder picker can list folder
+          names; no file content is ever read).
+        </p>
+
+        <div id="drive-disconnected" class="row" hidden>
+          <div class="grow">
+            <label>Status</label>
+            <div class="masked">Not connected</div>
+          </div>
+          <button id="connect-drive" class="primary">Connect Google Drive</button>
+        </div>
+
+        <div id="drive-connected" hidden>
+          <div class="row">
+            <div class="grow">
+              <label>Connected as</label>
+              <div id="drive-email" class="masked">—</div>
+            </div>
+            <button id="disconnect-drive" class="danger">Disconnect</button>
+          </div>
+
+          <div class="row" style="margin-top: 10px;">
+            <div class="grow">
+              <label>Save folder</label>
+              <div id="drive-folder" class="masked">— No folder selected —</div>
+            </div>
+            <button id="pick-folder">Pick folder</button>
+          </div>
+
+          <div id="drive-picker" class="picker" hidden>
+            <div class="picker-crumbs" id="picker-crumbs"></div>
+            <ul class="picker-list" id="picker-list"></ul>
+            <div class="row" style="margin-top: 8px; justify-content: flex-end;">
+              <button id="picker-cancel">Cancel</button>
+              <button id="picker-select" class="primary" style="margin-left: 6px;">Select this folder</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 12px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <input id="drive-autosave" type="checkbox" />
+              Auto-save every finalized transcript to this folder
+            </label>
+          </div>
+        </div>
+
+        <div id="drive-status" class="status"></div>
+      </section>
+
+      <section class="card">
+        <h2>Whisper language</h2>
+        <p class="hint">
+          Hint Whisper which language the audio is in. Better accuracy than auto-detect
+          when you know the language; worse than auto-detect when the meeting language
+          differs from the hint. Whisper accepts only one language per chunk; the
+          Bosnian / Croatian / Serbian option uses Whisper's <code>hr</code> code,
+          which it groups with all three internally.
+        </p>
+
+        <div class="row" style="flex-direction: column; align-items: stretch;">
+          <label for="whisper-language">Language</label>
+          <select id="whisper-language">
+            <option value="">Auto-detect (default)</option>
+            <option value="hr">Bosnian / Croatian / Serbian</option>
+            <option value="en">English</option>
+            <option value="" disabled>──────────</option>
+            <option value="de">German</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="it">Italian</option>
+            <option value="nl">Dutch</option>
+            <option value="pt">Portuguese</option>
+            <option value="ru">Russian</option>
+            <option value="tr">Turkish</option>
+            <option value="ar">Arabic</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+          </select>
+        </div>
+
+        <div class="row" style="margin-top: 8px; justify-content: flex-end;">
+          <button id="save-language" class="primary">Save</button>
+        </div>
+
+        <div id="language-status" class="status"></div>
+      </section>
+
+      <section class="card muted">
+        <h2>How it works</h2>
+        <ul>
+          <li>Audio is captured from the active Meet or Teams tab only while you click <strong>Record audio</strong> in the popup.</li>
+          <li>Audio is chunked into 30 second segments and uploaded to <code>api.openai.com/v1/audio/transcriptions</code> as they become available.</li>
+          <li>Raw audio is held in IndexedDB while in flight and deleted after successful transcription.</li>
+          <li>Transcripts are merged into the downloadable Markdown file under a separate <code>## Audio transcript</code> section.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

@@ -13,6 +13,8 @@
     <section class="info">
       <div><label>Meeting:</label> <span id="meeting-id">—</span></div>
       <div><label>Captured lines:</label> <span id="line-count">0</span></div>
+      <div><label>Audio:</label> <span id="audio-status">off</span></div>
+      <div><label>Drive:</label> <span id="drive-status">not connected</span></div>
     </section>
 
     <section class="actions">
@@ -20,8 +22,17 @@
     </section>
 
     <section class="actions">
+      <button id="toggle-audio" class="primary" title="Requires an OpenAI API key (Options)">Record audio</button>
+      <button id="open-options">Options</button>
+    </section>
+
+    <section class="actions">
       <button id="download">Download now</button>
       <button id="clear" class="danger">Clear</button>
+    </section>
+
+    <section class="actions">
+      <button id="save-drive" class="primary">Save to Drive</button>
     </section>
 
     <section class="actions secondary">

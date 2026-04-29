@@ -74,28 +74,57 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+function sourceBadges(item) {
+  const badges = [];
+  if (item.lineCount > 0) badges.push('<span class="source-badge source-captions">CAPTIONS</span>');
+  if (item.audioLineCount > 0) badges.push('<span class="source-badge source-audio">AUDIO</span>');
+  if (item.driveUpload && item.driveUpload.fileId) {
+    const link = item.driveUpload.webViewLink ? ` title="${escapeHtml(item.driveUpload.webViewLink)}"` : '';
+    badges.push(`<span class="source-badge source-drive"${link}>DRIVE</span>`);
+  }
+  const am = item.audioMeta;
+  if (am && am.state === 'recording') badges.push('<span class="source-badge source-pending">REC</span>');
+  else if (am && am.state === 'transcribing') badges.push('<span class="source-badge source-pending">TRANSCRIBING</span>');
+  return badges.join(' ');
+}
+
+function combinedFirstSeen(item) {
+  const m = item.meta && item.meta.firstSeenAt;
+  const a = item.audioMeta && item.audioMeta.startedAt;
+  if (m && a) return Math.min(m, a);
+  return m || a || 0;
+}
+
+function combinedLastUpdated(item) {
+  const m = item.meta && item.meta.lastUpdatedAt;
+  const a = item.audioMeta && (item.audioMeta.stoppedAt || item.audioMeta.lastUpdatedAt);
+  if (m && a) return Math.max(m, a);
+  return m || a || 0;
+}
+
 async function render() {
   const res = await chrome.runtime.sendMessage({ type: 'LIST_MEETINGS' });
   const items = (res && res.items) || [];
-  items.sort((a, b) => {
-    const aT = (a.meta && (a.meta.lastUpdatedAt || a.meta.firstSeenAt)) || 0;
-    const bT = (b.meta && (b.meta.lastUpdatedAt || b.meta.firstSeenAt)) || 0;
-    return bT - aT;
-  });
+  items.sort((a, b) => combinedLastUpdated(b) - combinedLastUpdated(a));
 
   rowsEl.innerHTML = '';
   for (const item of items) {
     const meta = item.meta || {};
+    const aMeta = item.audioMeta || {};
+    const firstSeen = combinedFirstSeen(item);
+    const lastUpdated = combinedLastUpdated(item);
+    const totalLines = (item.lineCount || 0) + (item.audioLineCount || 0);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><span class="platform-badge ${platformClass(item.platform)}">${platformLabel(item.platform)}</span></td>
-      <td>${fmtDateTime(meta.firstSeenAt)}${meta.finalized ? '<span class="finalized">ended</span>' : ''}</td>
-      <td>${fmtDuration(meta.firstSeenAt, meta.lastUpdatedAt)}</td>
+      <td><span class="platform-badge ${platformClass(item.platform)}">${platformLabel(item.platform)}</span>${sourceBadges(item) ? ' ' + sourceBadges(item) : ''}</td>
+      <td>${fmtDateTime(firstSeen)}${meta.finalized ? '<span class="finalized">ended</span>' : ''}</td>
+      <td>${fmtDuration(firstSeen, lastUpdated)}</td>
       <td class="participants">${participantsCell(meta)}</td>
-      <td class="num">${item.lineCount || (meta.lineCount || 0)}</td>
+      <td class="num">${totalLines}</td>
       <td><span class="meeting-id">${escapeHtml(item.meetingId)}</span></td>
       <td class="actions-col">
         <span class="cell-actions">
+          <button class="save-drive">${item.driveUpload && item.driveUpload.fileId ? 'Re-save Drive' : 'Save to Drive'}</button>
           <button class="download primary">Download</button>
           <button class="clear danger">Delete</button>
         </span>
@@ -115,6 +144,28 @@ async function render() {
         toast(`Downloaded ${r.filename}`);
       } else {
         toast('Download failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
+      }
+    });
+    tr.querySelector('.save-drive').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      const r = await chrome.runtime.sendMessage({
+        type: 'SAVE_TO_DRIVE',
+        platform: item.platform,
+        meetingId: item.meetingId,
+        sessionId: item.sessionId,
+      });
+      if (btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+      if (r && r.ok) {
+        toast(r.updated ? 'Drive file updated.' : 'Saved to Drive.');
+        render();
+      } else {
+        toast('Drive save failed: ' + (r && r.error ? r.error : 'unknown'), 'error');
       }
     });
     tr.querySelector('.clear').addEventListener('click', async () => {

@@ -61,23 +61,32 @@
         block.querySelector('[class*="NWpY"]') ||
         block.querySelector('.jxFHg span') ||
         block.querySelector('[class*="jxFHg"] span');
-      if (nameEl) speaker = (nameEl.textContent || '').trim();
+      if (nameEl && !isInsideIconElement(nameEl)) {
+        const t = (nameEl.textContent || '').trim();
+        if (t && !isIconLigature(t)) speaker = t;
+      }
       const capEl =
         block.querySelector('.ygicle') ||
         block.querySelector('[class*="ygicle"]') ||
         block.querySelector('.VbkSUe') ||
         block.querySelector('[class*="VbkSUe"]');
-      if (capEl) caption = (capEl.textContent || '').trim();
+      if (capEl && !isInsideIconElement(capEl)) {
+        const t = (capEl.textContent || '').trim();
+        if (t && !isIconLigature(t)) caption = t;
+      }
       if (!caption) {
         const items = collectTextNodes(block);
         if (items.length === 0) return null;
         caption = items.reduce((a, b) => (b.length > a.length ? b : a));
         if (!speaker) {
           speaker =
-            items.filter((t) => t !== caption && t.length < 60).sort((a, b) => a.length - b.length)[0] || null;
+            items
+              .filter((t) => t !== caption && t.length < 60 && !isIconLigature(t))
+              .sort((a, b) => a.length - b.length)[0] || null;
         }
       }
       if (!caption) return null;
+      if (speaker && isIconLigature(speaker)) speaker = null;
       return { speaker: speaker || 'Unknown', text: caption };
     },
   };
@@ -156,12 +165,40 @@
     extractBlockContent: (block) => {
       const nameEl = block.querySelector(TEAMS_AUTHOR_SELECTOR);
       const textEl = block.querySelector(TEAMS_TEXT_SELECTOR);
-      const speaker = nameEl ? (nameEl.textContent || '').trim() : '';
+      let speaker = nameEl ? (nameEl.textContent || '').trim() : '';
       const caption = textEl ? (textEl.textContent || '').trim() : '';
       if (!caption) return null;
+      if (speaker && (isIconLigature(speaker) || isInsideIconElement(nameEl))) speaker = '';
       return { speaker: speaker || 'Unknown', text: caption };
     },
   };
+
+  // Material Icons / Google Symbols render glyphs via a font, but the DOM text
+  // content is the icon's snake_case ligature name (e.g., "arrow_downward",
+  // "keyboard_arrow_down"). We must never treat that text as speaker or
+  // caption content.
+  const ICON_LIGATURE_RE = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
+
+  function isIconLigature(text) {
+    if (!text) return false;
+    return ICON_LIGATURE_RE.test(text.trim());
+  }
+
+  function isInsideIconElement(el) {
+    let cur = el;
+    while (cur && cur.nodeType === 1) {
+      const cls = typeof cur.className === 'string' ? cur.className : '';
+      if (/\b(material-icons|material-symbols|google-material-icons|google-symbols)\b/i.test(cls)) {
+        return true;
+      }
+      try {
+        const ff = (getComputedStyle(cur).fontFamily || '');
+        if (/Material Icons|Material Symbols|Google Symbols/i.test(ff)) return true;
+      } catch (e) {}
+      cur = cur.parentElement;
+    }
+    return false;
+  }
 
   function collectTextNodes(block) {
     const items = [];
@@ -169,7 +206,10 @@
     let node;
     while ((node = walker.nextNode())) {
       const t = node.textContent.trim();
-      if (t) items.push(t);
+      if (!t) continue;
+      if (isIconLigature(t)) continue;
+      if (isInsideIconElement(node.parentElement)) continue;
+      items.push(t);
     }
     return items;
   }
@@ -336,6 +376,7 @@
       if (
         speaker &&
         speaker !== 'Unknown' &&
+        !isIconLigature(speaker) &&
         !meta.participants.includes(speaker) &&
         meta.participants.length < MAX_PARTICIPANTS_IN_META
       ) {
