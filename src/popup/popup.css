@@ -90,6 +90,23 @@ button[disabled] {
 }
 button[disabled]:hover { background: #fff; }
 
+#audio-language {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-size: 12px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  color: #202124;
+  font-family: inherit;
+  cursor: pointer;
+  height: 32px;
+}
+#audio-language:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .hint {
   font-size: 11px;
   color: #5f6368;

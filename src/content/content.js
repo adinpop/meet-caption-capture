@@ -562,8 +562,106 @@
     state.meetingId = adapter.getMeetingId(location);
   }
 
+  // ------- Audio recording indicator -------
+  // Floating "REC" pill on the meeting page while audio capture is active.
+  // Driven by audio_meta:<platform>:<meetingId>:* storage keys, so it reacts
+  // to the popup toggle without any extra messaging. Top frame only.
+
+  // A 'recording' meta older than this is treated as stale (browser crash
+  // before the offscreen doc could flip it back to idle).
+  const AUDIO_STALE_MS = 6 * 60 * 60 * 1000;
+  const audioBadge = { host: null, timeEl: null, startedAt: null, timer: null };
+
+  function fmtElapsed(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const hh = Math.floor(s / 3600);
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+  }
+
+  function showAudioBadge(startedAt) {
+    audioBadge.startedAt = startedAt || Date.now();
+    if (!audioBadge.host) {
+      const host = document.createElement('div');
+      host.setAttribute('data-rubicon-audio-badge', '');
+      const root = host.attachShadow({ mode: 'closed' });
+      root.innerHTML = `
+        <style>
+          .pill {
+            position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+            z-index: 2147483647; display: flex; align-items: center; gap: 8px;
+            padding: 6px 12px; border-radius: 999px;
+            background: rgba(32, 33, 36, 0.92); color: #fff;
+            font: 500 13px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            pointer-events: none; user-select: none;
+          }
+          .dot {
+            width: 10px; height: 10px; border-radius: 50%; background: #ea4335;
+            animation: pulse 1.4s ease-in-out infinite;
+          }
+          .time { font-variant-numeric: tabular-nums; opacity: 0.8; }
+          @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        </style>
+        <div class="pill" role="status" aria-live="polite">
+          <span class="dot"></span><span>RUBICON recording audio</span><span class="time"></span>
+        </div>`;
+      audioBadge.timeEl = root.querySelector('.time');
+      audioBadge.host = host;
+    }
+    if (!audioBadge.host.isConnected) document.documentElement.appendChild(audioBadge.host);
+    const render = () => {
+      audioBadge.timeEl.textContent = fmtElapsed(Date.now() - audioBadge.startedAt);
+    };
+    render();
+    if (!audioBadge.timer) audioBadge.timer = setInterval(render, 1000);
+  }
+
+  function hideAudioBadge() {
+    if (audioBadge.timer) clearInterval(audioBadge.timer);
+    audioBadge.timer = null;
+    if (audioBadge.host) audioBadge.host.remove();
+  }
+
+  function isLiveRecording(meta) {
+    return !!meta && meta.state === 'recording' &&
+      (!meta.startedAt || Date.now() - meta.startedAt < AUDIO_STALE_MS);
+  }
+
+  async function refreshAudioBadge() {
+    if (!state.meetingId) { hideAudioBadge(); return; }
+    const prefix = `audio_meta:${adapter.id}:${state.meetingId}:`;
+    let all;
+    try { all = await chrome.storage.local.get(null); } catch (e) { return; }
+    let live = null;
+    for (const [k, v] of Object.entries(all)) {
+      if (!k.startsWith(prefix) || !isLiveRecording(v)) continue;
+      if (!live || (v.startedAt || 0) > (live.startedAt || 0)) live = v;
+    }
+    if (live) showAudioBadge(live.startedAt);
+    else hideAudioBadge();
+  }
+
+  function initAudioBadge() {
+    if (window !== window.top) return;
+    refreshAudioBadge();
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      if (Object.keys(changes).some((k) => k.startsWith('audio_meta:'))) refreshAudioBadge();
+    });
+    let lastMeetingId = state.meetingId;
+    setInterval(() => {
+      if (state.meetingId !== lastMeetingId) {
+        lastMeetingId = state.meetingId;
+        refreshAudioBadge();
+      }
+    }, URL_WATCH_MS);
+  }
+
   function init() {
     state.meetingId = adapter.getMeetingId(location);
+    initAudioBadge();
     state.scanTimer = setInterval(tick, SCAN_INTERVAL_MS);
     state.urlTimer = setInterval(watchUrl, URL_WATCH_MS);
     window.addEventListener('pagehide', () => {

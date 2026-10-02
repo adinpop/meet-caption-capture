@@ -25,7 +25,7 @@ export async function transcribeBlob(apiKey, blob, { prompt = '', language, sign
   // OpenAI infers format from file extension. MediaRecorder produces webm/opus.
   form.append('file', blob, 'audio.webm');
   form.append('model', MODEL);
-  form.append('response_format', 'json');
+  form.append('response_format', 'verbose_json');
   if (prompt) form.append('prompt', prompt.slice(0, 224));
   if (language) form.append('language', language);
 
@@ -62,5 +62,9 @@ export async function transcribeBlob(apiKey, blob, { prompt = '', language, sign
 
   const json = await res.json();
   const text = (json && typeof json.text === 'string') ? json.text.trim() : '';
-  return { text };
+  const duration = (json && typeof json.duration === 'number') ? json.duration : 0;
+  const segments = (json && Array.isArray(json.segments))
+    ? json.segments.map((s) => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: (s.text || '').trim() }))
+    : null;
+  return { text, duration, segments };
 }

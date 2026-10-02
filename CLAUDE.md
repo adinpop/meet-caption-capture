@@ -5,7 +5,7 @@ Chrome MV3 extension that captures live captions from Google Meet and Microsoft 
 ## Project layout
 
 ```
-manifest.json                         MV3 manifest, v0.8.4. SW is ES module. Has stable "key" so the extension ID is fixed.
+manifest.json                         MV3 manifest, v0.8.5. SW is ES module. Has stable "key" so the extension ID is fixed.
 build.sh                              Packages a Chrome Web Store zip to ../rubicon-meet-caption-capture-vX.Y.Z.zip
 src/
   content/content.js                  MutationObserver + adapters; writes captions transcripts directly to chrome.storage.local
@@ -44,6 +44,7 @@ icons/
   - Audio storage keys: `audio_transcript:<platform>:<meetingId>:<sessionId>` → array of `[HH:MM:SS] text` lines; `audio_meta:<platform>:<meetingId>:<sessionId>` → `{ state, startedAt, stoppedAt, chunkCount, failedChunks, lastTail, lastError, ... }`. `lastTail` (≤80 chars) is fed back to Whisper as `prompt` on the next chunk to bridge mid-sentence cuts.
   - Retry: one immediate retry on 5xx / 429, fail otherwise. Failed chunks stay in IndexedDB with `status: 'failed'` and can be retried via `RETRY_FAILED_CHUNKS`.
   - Download: `finalizeAndDownload` now emits `## Captions transcript` and/or `## Audio transcript (Whisper)` sections in the same `.md`, driven by whichever storage keys exist for the session.
+  - On-page indicator: the content script (top frame only) watches `audio_meta:<platform>:<meetingId>:*` via `chrome.storage.onChanged` and shows a fixed "RUBICON recording audio" pill with elapsed time while any session is in `state: 'recording'`. It hides as soon as Stop flips the state to `transcribing`. A `recording` meta older than 6 h is treated as stale.
 - **API key handling**: stored only in `chrome.storage.local` (never `sync`). Only the service worker reads it. Offscreen doc and popup never see it. `host_permissions` is narrowed to `https://api.openai.com/*` so no other exfil endpoint is reachable.
 - **Google Drive auto-save (opt-in, the focus of 0.8.x)**: when connected and a folder is picked, every finalized transcript is uploaded as Markdown to that folder.
   - **Auth**: `chrome.identity.getAuthToken` against the manifest `oauth2.client_id`. The extension's stable ID is enforced by the manifest `key` field, so the OAuth client (Item ID = `ooafpmnoohndcngljgjnkinfkhkbmglo`) keeps matching across reloads.
@@ -87,7 +88,8 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 - **0.8.1**: auto-open the folder picker right after Connect Drive succeeds, and detect connection state via the silent token check rather than the `connectedEmail` field (which is empty on some Chrome profiles).
 - **0.8.2**: keep the popup's audio button focused on capture. Removed the dual-purpose "Set API key to record" affordance from the audio toggle.
 - **0.8.3**: summarization feature removed. Deleted `src/lib/summarize.js`, `SUMMARIZE_SESSION` / `GET_SUMMARY` / `DELETE_SUMMARY` handlers, the `summary:*` storage key, and all summary UI. The Markdown export no longer renders Summary / Topics / Decisions / Action items / Blind spots / Opportunities sections. `summary:*` and `summarySettings` keys from previous installs are orphaned but harmless; Clear all wipes them along with the rest.
-- **0.8.4** (current): Whisper language hint dropdown in Options. Picks from Auto-detect (default, no hint), Bosnian / Croatian / Serbian (sends `hr`), English, or one of a dozen common other languages. Stored at `chrome.storage.local.whisperLanguage`. The service worker reads it once per drain and passes it to `transcribeBlob` as the `language` form field.
+- **0.8.4**: Whisper language hint dropdown in Options. Picks from Auto-detect (default, no hint), Bosnian / Croatian / Serbian (sends `hr`), English, or one of a dozen common other languages. Stored at `chrome.storage.local.whisperLanguage`. The service worker reads it once per drain and passes it to `transcribeBlob` as the `language` form field.
+- **0.8.5** (current): on-page "RUBICON recording audio" pill with elapsed timer on the Meet / Teams page while audio capture is active. Audio transcript lines are attributed to speakers by matching Whisper segment timestamps (`verbose_json`) against the captions timeline. Popup gets a compact Whisper language picker (BCS / English / Auto) next to Record audio.
 
 ## Build and install
 
@@ -98,7 +100,12 @@ Semantic first (role, aria-label, stable `data-tid` on Teams), Google/Microsoft 
 
 1. https://console.cloud.google.com → create project (e.g. `rubicon-meet-capture`).
 2. APIs & Services → Library → enable **Google Drive API**.
-3. APIs & Services → OAuth consent screen → External (or Internal if Workspace), add yourself as a test user.
+3. APIs & Services → OAuth consent screen → choose **User Type**:
+   - **Internal**: only accounts inside your Google Workspace org (e.g. `@rubicon.ba`) can connect. Private `@gmail.com` accounts are blocked. No Google review needed.
+   - **External**: any Google account, including private Gmail, can connect. Pick this if you want non-org users (e.g. a friend's Gmail) to use Drive auto-save. Then set the publishing status:
+     - **Testing**: add each allowed address under **Test users** (max 100). Those users can connect but see a one-time "Google hasn't verified this app" warning (Advanced → Go to (unsafe)), and their refresh token expires every 7 days so they must reconnect weekly. Fastest path for sharing with a few people.
+     - **Production / verified**: submit for OAuth verification (privacy policy, homepage, demo video; `drive.file` + `drive.metadata.readonly` are sensitive scopes so review is required). Removes the warning and the 7-day expiry, allows unlimited users. Takes days to weeks.
+   - Note: who is allowed is controlled in **your** Cloud project, since the shared manifest uses your `client_id`. A friend running this copy connects against your project; add their Gmail as a test user there.
 4. Add scopes `https://www.googleapis.com/auth/drive.file` and `https://www.googleapis.com/auth/drive.metadata.readonly`.
 5. APIs & Services → Credentials → Create credentials → OAuth client ID, type **Chrome extension**, Item ID `ooafpmnoohndcngljgjnkinfkhkbmglo`.
 6. Copy the resulting Client ID into `manifest.json` → `oauth2.client_id`. The current ID is `564751840053-svqop3hten0s5e4v3kunpirpd475sjno.apps.googleusercontent.com` (your project's; change if forking).

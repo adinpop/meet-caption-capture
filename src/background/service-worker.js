@@ -319,10 +319,19 @@ function buildMarkdown(platform, meetingId, record, lines, audioLines, audioMeta
   if (audioLines && audioLines.length > 0) {
     out.push('## Audio transcript (Whisper)');
     out.push('');
+    // Lines may be attributed ([HH:MM:SS] Speaker: text) or bare ([HH:MM:SS] text).
+    // Speaker names are at most 50 chars and contain no colons.
+    const AUDIO_ATTR_RE = /^\[(\d{2}:\d{2}:\d{2})\]\s+([^:]{1,50}):\s*([\s\S]*)$/;
+    const AUDIO_BARE_RE = /^\[(\d{2}:\d{2}:\d{2})\]\s+([\s\S]*)$/;
     for (const line of audioLines) {
-      const m = line.match(/^\[(\d{2}:\d{2}:\d{2})\]\s+([\s\S]*)$/);
-      if (m) out.push(`**[${m[1]}]** ${m[2]}`);
-      else out.push(line);
+      const ma = line.match(AUDIO_ATTR_RE);
+      if (ma) {
+        out.push(`**[${ma[1]}] ${ma[2]}:** ${ma[3]}`);
+      } else {
+        const mb = line.match(AUDIO_BARE_RE);
+        if (mb) out.push(`**[${mb[1]}]** ${mb[2]}`);
+        else out.push(line);
+      }
       out.push('');
     }
     if (audioMeta && audioMeta.failedChunks) {
@@ -367,6 +376,71 @@ function extractParticipants(lines) {
     ordered.push(raw);
   }
   return ordered;
+}
+
+// -------------------- audio speaker attribution --------------------
+
+function captionTimestampToMs(hhmmss, firstSeenAtMs) {
+  const [hh, mm, ss] = hhmmss.split(':').map(Number);
+  const base = new Date(firstSeenAtMs);
+  base.setHours(hh, mm, ss, 0);
+  return base.getTime();
+}
+
+function buildSpeakerTimeline(captionLines, firstSeenAtMs) {
+  if (!captionLines.length || !firstSeenAtMs) return [];
+  const RE = /^\[(\d{2}:\d{2}:\d{2})\]\s+([^:]+):/;
+  const timeline = [];
+  for (const line of captionLines) {
+    const m = line.match(RE);
+    if (!m) continue;
+    const speaker = m[2].trim();
+    if (!speaker || ICON_LIGATURE_RE.test(speaker)) continue;
+    timeline.push({ absMs: captionTimestampToMs(m[1], firstSeenAtMs), speaker });
+  }
+  return timeline;
+}
+
+function findSpeakerAtTime(timeline, targetMs) {
+  if (!timeline.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const { absMs, speaker } of timeline) {
+    const diff = targetMs - absMs;
+    // Accept captions within 60s before or 15s after (captions lag speech by 0-3s)
+    if (diff >= -15000 && diff <= 60000) {
+      const dist = Math.abs(diff);
+      if (dist < bestDist) { bestDist = dist; best = speaker; }
+    }
+  }
+  return best;
+}
+
+function fmtTimestamp(absMs) {
+  const d = new Date(absMs);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
+function buildAudioLines(result, chunkStartAbsMs, speakerTimeline) {
+  const lines = [];
+  if (result.segments && result.segments.length > 0) {
+    for (const seg of result.segments) {
+      const text = (seg.text || '').trim();
+      if (!text) continue;
+      const segAbsMs = chunkStartAbsMs + Math.round(seg.start * 1000);
+      const ts = fmtTimestamp(segAbsMs);
+      const speaker = findSpeakerAtTime(speakerTimeline, segAbsMs);
+      lines.push(speaker ? `[${ts}] ${speaker}: ${text}` : `[${ts}] ${text}`);
+    }
+  } else {
+    const text = (result.text || '').trim();
+    if (text) {
+      const ts = fmtTimestamp(chunkStartAbsMs);
+      const speaker = findSpeakerAtTime(speakerTimeline, chunkStartAbsMs);
+      lines.push(speaker ? `[${ts}] ${speaker}: ${text}` : `[${ts}] ${text}`);
+    }
+  }
+  return lines;
 }
 
 function formatParticipants(participants, max = 3) {
@@ -775,6 +849,13 @@ async function processPendingChunks(platform, meetingId, sessionId) {
     return;
   }
 
+  // Load caption lines once per drain for speaker attribution.
+  const { tx: capTxKey, meta: capMetaKey } = keysFor(platform, meetingId, sessionId);
+  const capData = await chrome.storage.local.get([capTxKey, capMetaKey]);
+  const capLines = capData[capTxKey] || [];
+  const capRecord = capData[capMetaKey] || null;
+  const speakerTimeline = buildSpeakerTimeline(capLines, capRecord && capRecord.firstSeenAt);
+
   for (const row of pending) {
     const meta = await getAudioMeta(row.platform, row.meetingId, row.sessionId);
     const prompt = (meta && meta.lastTail) || '';
@@ -811,20 +892,19 @@ async function processPendingChunks(platform, meetingId, sessionId) {
       continue;
     }
 
-    const start = (meta && meta.startedAt) || Date.now();
-    const d = new Date(start + (row.offsetMs || 0));
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    const line = `[${hh}:${mm}:${ss}] ${text}`;
+    const audioStartMs = (meta && meta.startedAt) || Date.now();
+    // offsetMs is recorded at chunk-end; subtract the chunk's actual duration to get the start.
+    const chunkDurationMs = Math.round((result.duration || 30) * 1000);
+    const chunkStartAbsMs = audioStartMs + (row.offsetMs || 0) - chunkDurationMs;
+    const newLines = buildAudioLines(result, chunkStartAbsMs, speakerTimeline);
 
     const { tx, meta: metaKey } = audioKeysFor(row.platform, row.meetingId, row.sessionId);
     const got = await chrome.storage.local.get([tx, metaKey]);
     const lines = Array.isArray(got[tx]) ? got[tx].slice() : [];
-    lines.push(line);
+    lines.push(...newLines);
     const m = got[metaKey] || {
       platform: row.platform, meetingId: row.meetingId, sessionId: row.sessionId,
-      state: 'transcribing', startedAt: start, stoppedAt: null,
+      state: 'transcribing', startedAt: audioStartMs, stoppedAt: null,
       chunkCount: 0, failedChunks: 0, lastTail: '', lastError: null,
     };
     m.chunkCount = (m.chunkCount || 0) + 1;

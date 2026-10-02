@@ -4,6 +4,7 @@ const lineCountEl = document.getElementById('line-count');
 const audioStatusEl = document.getElementById('audio-status');
 const toggleBtn = document.getElementById('toggle-capture');
 const toggleAudioBtn = document.getElementById('toggle-audio');
+const audioLangEl = document.getElementById('audio-language');
 const openOptionsBtn = document.getElementById('open-options');
 const downloadBtn = document.getElementById('download');
 const clearBtn = document.getElementById('clear');
@@ -91,6 +92,7 @@ let audioButtonReason = '';
 function setAudioButton(mode, info) {
   audioButtonMode = mode;
   audioButtonReason = info || '';
+  audioLangEl.disabled = mode === 'stop';
   if (mode === 'stop') {
     toggleAudioBtn.textContent = 'Stop audio';
     toggleAudioBtn.className = 'primary stop';
@@ -398,6 +400,7 @@ toggleAudioBtn.addEventListener('click', async () => {
     if (r && r.ok) setMsg('Audio recording stopped. Remaining chunks will transcribe in the background.', 'ok');
     else setMsg('Could not stop audio: ' + (r && r.error ? r.error : 'unknown'), 'error');
   } else {
+    await chrome.storage.local.set({ whisperLanguage: audioLangEl.value });
     const r = await chrome.runtime.sendMessage({
       type: 'BEGIN_AUDIO',
       tabId: tab.id,
@@ -523,6 +526,16 @@ clearBtn.addEventListener('click', async () => {
   });
   setMsg('Transcript cleared.', 'ok');
   refresh();
+});
+
+chrome.storage.local.get('whisperLanguage').then(got => {
+  const lang = got.whisperLanguage;
+  const valid = ['hr', 'en', ''];
+  audioLangEl.value = valid.includes(lang) ? lang : 'hr';
+});
+
+audioLangEl.addEventListener('change', () => {
+  chrome.storage.local.set({ whisperLanguage: audioLangEl.value });
 });
 
 refresh();
